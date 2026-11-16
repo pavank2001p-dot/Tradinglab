@@ -3,8 +3,22 @@
 import { fmtUsd, type Market } from "@/lib/api";
 import { GOLD, unitsLabel } from "@/lib/markets";
 
-export const shortUsd = (v: number) =>
-  v >= 1e12 ? `$${+(v / 1e12).toFixed(2)}T` : v >= 1e9 ? `$${+(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `$${+(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `$${+(v / 1e3).toFixed(1)}k` : `$${v}`;
+const SCALE: [number, string][] = [[1e15, " quadrillion"], [1e12, "T"], [1e9, "B"], [1e6, "M"], [1e3, "K"]];
+const two = (n: number) => (Math.round(n * 100) / 100).toLocaleString("en-US", { maximumFractionDigits: 2 });
+
+/** 950, 5K, 1.25M, 1T, 1 quadrillion. Rounding moves up a step, so it never shows "1000K". */
+export const shortNum = (a: number): string => {
+  for (const [k, suffix] of SCALE) if (Math.round((a / k) * 100) / 100 >= 1) return `${two(a / k)}${suffix}`;
+  return two(a);
+};
+
+/** $1, $950, $5K, $1.25M, $1T, $1 quadrillion. */
+export const shortUsd = (v: number) => `${v < 0 ? "-" : ""}$${shortNum(Math.abs(v))}`;
+
+/** A quantity that reads well from 0.0003 to trillions. */
+const qty = (n: number) =>
+  n >= 1e9 ? shortNum(n)
+    : n >= 100 ? Math.round(n).toLocaleString("en-US") : n >= 0.01 ? n.toFixed(2) : n.toPrecision(2);
 
 /** Leverage grouped the way brokers present it, from none to the high ratios offshore accounts offer. */
 export const TIERS: { label: string; note: string; tone: string; levels: number[] }[] = [
@@ -57,8 +71,8 @@ export default function LeveragePicker({ value, onPick, balance, price, market =
         <p className="mt-1 text-muted">{t.note}.</p>
         <ul className="mt-2 space-y-1 text-foreground/90">
           {lev < value && <li>{market.name} is capped at 1:{market.max_leverage}, so trades there get 1:{lev}.</li>}
-          <li>With {shortUsd(balance)} you can control up to <b>{fmtUsd(control)}</b> of {what}
-            {units != null && <> (about {units >= 100 ? Math.round(units).toLocaleString("en-US") : units.toFixed(2)} {unit} at {fmtUsd(price!)})</>}.</li>
+          <li>With {shortUsd(balance)} you can control up to <b>{control >= 1e9 ? shortUsd(control) : fmtUsd(control)}</b> of {what}
+            {units != null && <> (about {qty(units)} {unit} at {fmtUsd(price!)})</>}.</li>
           <li>At full size, a <b>{wipe < 1 ? wipe.toFixed(2) : wipe.toFixed(1)}%</b> move against you would trigger the stop-out.</li>
           <li>Below {marginCall}% margin level you get a margin call and can&apos;t open new trades; at {stopOut}% positions close automatically.</li>
         </ul>

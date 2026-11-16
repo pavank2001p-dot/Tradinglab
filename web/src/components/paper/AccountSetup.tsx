@@ -5,13 +5,16 @@ import { api, fmtUsd, type Market, type PaperState } from "@/lib/api";
 import { Icon } from "../ui";
 import LeveragePicker, { shortUsd } from "./LeveragePicker";
 
-const PRESETS = [1_000, 5_000, 10_000, 50_000, 100_000, 1_000_000];
+const PRESETS = [100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 1_000_000_000, 1_000_000_000_000];
+const MIN = 1;
+/** Two significant figures, so the slider lands on round amounts at every size. */
+const nice = (v: number) => { const p = Math.pow(10, Math.floor(Math.log10(v)) - 1); return Math.max(MIN, Math.round(v / p) * p); };
 export const SETUP_KEY = "goldlab-paper-setup";
 
 /** First visit to paper trading: choose how much virtual money to start with and the leverage, like opening a broker account. */
 export default function AccountSetup({ state, market, onDone }: { state: PaperState; market: Market; onDone: (msg: string | null) => void }) {
   const [bal, setBal] = useState(state.account.starting_balance);
-  const [text, setText] = useState(String(state.account.starting_balance));
+  const [text, setText] = useState(state.account.starting_balance.toLocaleString("en-US"));
   const [lev, setLev] = useState(state.account.leverage);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
@@ -35,11 +38,15 @@ export default function AccountSetup({ state, market, onDone }: { state: PaperSt
     }
   }
 
+  const typed = Number(text.replace(/[,$\s]/g, ""));
+  const valid = text.trim() !== "" && Number.isFinite(typed) && typed >= MIN && typed <= max;
   const pickText = (v: string) => {
     setText(v);
     const n = Number(v.replace(/[,$\s]/g, ""));
-    if (n >= 1 && n <= max) setBal(n);
+    if (Number.isFinite(n) && n >= MIN && n <= max) setBal(n);
   };
+  // The slider runs on a log scale over the whole allowed range, $1 to the account maximum.
+  const span = Math.log10(max / MIN);
 
   return (
     <section className="rise-in relative mt-6 overflow-hidden rounded-3xl border border-gold/40 bg-gradient-to-br from-gold/12 via-surface to-surface p-5 sm:p-8">
@@ -57,23 +64,25 @@ export default function AccountSetup({ state, market, onDone }: { state: PaperSt
               <input id="setup-bal" value={text} inputMode="decimal" onChange={(e) => pickText(e.target.value)}
                 className="w-full bg-transparent px-2 py-3 text-3xl font-bold tabular-nums outline-none" />
             </div>
-            <input type="range" min={0} max={PRESETS.length - 1} step={0.01} aria-label="Starting balance"
-              value={Math.log10(bal / 1000) / Math.log10(1000) * (PRESETS.length - 1)}
+            <input type="range" min={0} max={1} step={0.001} aria-label="Starting balance"
+              value={Math.log10(bal / MIN) / span}
               onChange={(e) => {
-                const v = Math.round(1000 * Math.pow(1000, Number(e.target.value) / (PRESETS.length - 1)) / 100) * 100;
+                const v = Math.min(max, nice(MIN * Math.pow(10, Number(e.target.value) * span)));
                 setBal(v);
-                setText(String(v));
+                setText(v.toLocaleString("en-US"));
               }}
               className="mt-4 w-full cursor-pointer accent-[var(--gold)]" />
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {PRESETS.map((v) => (
-                <button key={v} type="button" onClick={() => { setBal(v); setText(String(v)); }}
+              {PRESETS.filter((v) => v <= max).map((v) => (
+                <button key={v} type="button" onClick={() => { setBal(v); setText(v.toLocaleString("en-US")); }}
                   className={`rounded-full border px-3 py-1 text-xs tabular-nums transition ${bal === v ? "border-gold bg-gold/15 text-foreground" : "border-border text-muted hover:text-foreground"}`}>
                   {shortUsd(v)}
                 </button>
               ))}
             </div>
-            <p className="mt-2 text-xs text-muted">Any amount from $1 up to {shortUsd(max)}.</p>
+            <p className={`mt-2 text-xs ${valid ? "text-muted" : "text-down"}`}>
+              {valid ? "" : "Enter an amount in dollars. "}Any amount from $1 up to {shortUsd(max)} ({fmtUsd(max)}).
+            </p>
           </div>
           <div>
             <p className="text-sm font-medium">Leverage</p>
@@ -86,7 +95,7 @@ export default function AccountSetup({ state, market, onDone }: { state: PaperSt
 
         {err && <p className="mt-4 text-sm text-down">{err}</p>}
         <div className="mt-6 flex flex-wrap items-center gap-3">
-          <button type="button" onClick={open} disabled={busy}
+          <button type="button" onClick={open} disabled={busy || !valid}
             className="flex items-center gap-2 rounded-full bg-gradient-to-b from-gold-hi to-gold px-6 py-3 font-semibold text-black shadow-[0_10px_30px_-12px_var(--gold)] transition-[filter] hover:brightness-105 disabled:opacity-50">
             Open my account with {shortUsd(bal)} at 1:{lev} <Icon name="arrow" className="h-4 w-4" />
           </button>

@@ -16,7 +16,7 @@ import MarketPicker from "@/components/markets/MarketPicker";
 import { GOLD, unitsLabel, useMarket } from "@/lib/markets";
 import AccountSetup, { SETUP_KEY } from "@/components/paper/AccountSetup";
 import RulePanel from "@/components/prop/RulePanel";
-import LeveragePicker from "@/components/paper/LeveragePicker";
+import LeveragePicker, { shortUsd } from "@/components/paper/LeveragePicker";
 import { toast } from "@/components/Toaster";
 import { useUser } from "@/lib/useUser";
 import AlertsCard from "@/components/practice/AlertsCard";
@@ -35,9 +35,8 @@ const POLL_MS = 5000;
 const SIZE_STEPS = [0.2, 1, 2, 10, 20];
 /** Short unit for sizes: "oz" for metals, otherwise "shares", "barrels", "units"... */
 const unitShort = (m: Pick<Market, "unit">, n?: number) => (m.unit === "ounce" ? "oz" : unitsLabel(m, n));
-const BALANCES = [1_000, 10_000, 100_000, 1_000_000, 10_000_000];
-const short = (v: number) =>
-  v >= 1e12 ? `$${+(v / 1e12).toFixed(2)}T` : v >= 1e9 ? `$${+(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `$${+(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `$${+(v / 1e3).toFixed(1)}k` : `$${v}`;
+const BALANCES = [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 1_000_000_000, 1_000_000_000_000];
+const short = shortUsd;
 const REASON: Record<string, string> = {
   manual: "Closed by you",
   partial: "Part closed",
@@ -685,7 +684,7 @@ function Settings({ state, market, busy, act, onClose }: {
         <p className="mt-1 text-xs text-muted">It&apos;s virtual, so add as much as you like, up to {short(st.max_balance)}. Deposits count toward what you started with, so your return stays honest.</p>
         <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className={`${input} mt-3`} aria-label="Amount in dollars" />
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {[1_000, 10_000, 100_000, 1_000_000].map((v) => (
+          {[1_000, 10_000, 100_000, 1_000_000, 1_000_000_000].map((v) => (
             <button key={v} type="button" onClick={() => setAmount(String(v))}
               className={`rounded-full border px-2.5 py-0.5 text-xs tabular-nums transition ${amt === v ? "border-gold text-foreground" : "border-border text-muted hover:border-muted"}`}>{short(v)}</button>
           ))}
@@ -704,7 +703,7 @@ function Settings({ state, market, busy, act, onClose }: {
         <p className="mt-1 text-xs text-muted">A fresh account with any balance and leverage. This deletes every paper position, order and result{state.challenge ? ", and ends your prop challenge" : ""}.</p>
         <input value={balance} onChange={(e) => { setBalance(e.target.value); setConfirm(false); }} inputMode="decimal" className={`${input} mt-3`} aria-label="Starting balance in dollars" />
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {BALANCES.map((v) => (
+          {BALANCES.filter((v) => v <= st.max_balance).map((v) => (
             <button key={v} type="button" onClick={() => { setBalance(String(v)); setConfirm(false); }}
               className={`rounded-full border px-2.5 py-0.5 text-xs tabular-nums transition ${bal === v ? "border-gold text-foreground" : "border-border text-muted hover:border-muted"}`}>{short(v)}</button>
           ))}

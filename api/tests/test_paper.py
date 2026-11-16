@@ -223,3 +223,28 @@ def test_move_pending_order(client):
     assert s["orders"] == [] and s["positions"][0]["entry_price"] == 1992
 
     assert client.patch(f"/paper/orders/{o['id']}", json={"price": 1990}).status_code == 404
+
+
+@pytest.mark.parametrize("balance,leverage,units", [(1, 1, 0.0004), (10**12, 1000, 400_000_000)])
+def test_extreme_balances_trade_cleanly(client, balance, leverage, units):
+    """The whole allowed range, $1 to $1T, opens, values and closes trades without overflow or NaN."""
+    signup(client)
+    bar(-2, 2000, 2001, 1999, 2000)
+    s = client.post("/paper/reset", json={"balance": balance, "leverage": leverage}).json()
+    assert s["account"]["balance"] == balance
+    r = client.post("/paper/orders", json={"side": "long", "units": units})
+    assert r.status_code == 201, r.text
+    s = client.get("/paper").json()
+    a = s["account"]
+    assert a["margin_used"] == pytest.approx(units * 2000 / leverage, abs=0.01)
+    assert a["equity"] == pytest.approx(balance - units * 0.3, abs=0.01)  # money is kept to the cent
+    assert a["margin_level_pct"] > 100
+    pid = s["positions"][0]["id"]
+    closed = client.post(f"/paper/positions/{pid}/close").json()["position"]
+    assert closed["pnl"] == pytest.approx(-units * 0.3, abs=0.01)
+    for path in ("/paper", "/paper/report", "/coach/twin", "/prop/dna"):
+        r = client.get(path)
+        assert r.status_code == 200 and "NaN" not in r.text and "Infinity" not in r.text, path
+    # More than the margin allows is refused with a reason, not an error.
+    r = client.post("/paper/orders", json={"side": "long", "units": units * 10_000})
+    assert r.status_code in (409, 422) and r.json()["detail"]
