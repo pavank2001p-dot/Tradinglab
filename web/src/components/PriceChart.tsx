@@ -544,7 +544,7 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
       <div className={`relative ${full ? "min-h-0 flex-1" : ""}`} style={full ? undefined : { height }}>
         <div ref={box} data-loading={loading} className="chart-swap h-full w-full" />
         {legend && (
-          <div data-chart-legend className={`pointer-events-none absolute top-2 z-[1] flex flex-wrap gap-x-2.5 text-[11px] tabular-nums ${tools ? "left-14" : "left-3"}`}>
+          <div data-chart-legend className={`pointer-events-none absolute right-16 top-2 z-[1] flex flex-wrap gap-x-2.5 text-[11px] tabular-nums ${tools ? "left-14" : "left-3"}`}>
             {(["o", "h", "l", "c"] as const).map((k) => (
               <span key={k}><span className="text-muted">{k.toUpperCase()}</span> <span className={legend.c >= legend.o ? "text-up" : "text-down"}>{fmtPrice(legend[k])}</span></span>
             ))}
