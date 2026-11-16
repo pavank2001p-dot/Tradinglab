@@ -5,7 +5,8 @@ This describes past results against self-chosen limits. It is not advice to trad
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from . import db
+from . import config, db
+from . import instruments as ins
 from .auth import UserOut, current_user
 from .risk import PROFILES, profile_of
 from .trades import log_report
@@ -23,9 +24,11 @@ def _level(value: float | None, limit: float) -> str:
     return "close" if value <= limit * CLOSE else "over"
 
 
-def assess(trades: list[dict], stats: dict, capital: float, profile: str, stop_loss_pct: float | None = None) -> dict:
-    """trades: report trades in time order (side, units, entry_price, pnl, optional stop_loss).
-    stop_loss_pct: the backtest's stop distance, if it used one (overrides per-trade stops)."""
+def assess(trades: list[dict], stats: dict, capital: float, profile: str, stop_loss_pct: float | None = None,
+           symbol: str | None = None) -> dict:
+    """trades: report trades in time order (side, units, entry_price, pnl, optional stop_loss, optional symbol).
+    stop_loss_pct: the backtest's stop distance, if it used one (overrides per-trade stops).
+    symbol: the market when the trades don't carry their own (a backtest runs on one market)."""
     limits = PROFILES[profile]
     closed = [t for t in trades if t.get("exit_time") is not None]
 
@@ -95,14 +98,20 @@ def assess(trades: list[dict], stats: dict, capital: float, profile: str, stop_l
 
     # Drawdown, leverage and per-trade risk all scale roughly with trade size, so the
     # tightest ratio gives a size that would have stayed inside every limit.
-    units = max((t["units"] for t in closed), default=None)
-    suggested = None
-    if units and verdict != "fits":
+    # A size in units only means something within one market (ounces of gold and shares of Apple don't
+    # compare), so across several markets the suggestion is a share of the current sizes instead.
+    markets = {t.get("symbol") or symbol or config.SYMBOL for t in closed}
+    one = ins.get(next(iter(markets))) if len(markets) == 1 else None
+    units = max((t["units"] for t in closed), default=None) if one else None
+    suggested = scale_pct = None
+    if closed and verdict != "fits":
         ratios = [c["limit"] / c["value"] for c in checks if c["value"]]
-        if ratios:
-            suggested = max(int(units * min(ratios) * 10) / 10, 0.1)
-            if suggested >= units:
-                suggested = None
+        if ratios and min(ratios) < 1:
+            scale_pct = max(int(min(ratios) * 100), 1)
+            if one and units:
+                suggested = max(int(units * min(ratios) * 10) / 10, 0.1)
+                if suggested >= units:
+                    suggested = None
 
     return {
         "profile": profile,
@@ -114,6 +123,8 @@ def assess(trades: list[dict], stats: dict, capital: float, profile: str, stop_l
         "trades_checked": len(closed),
         "units": units,
         "suggested_units": suggested,
+        "unit": (("oz" if one.unit == "ounce" else f"{one.unit}s") if one else None),
+        "scale_pct": scale_pct,
     }
 
 
@@ -131,7 +142,7 @@ def for_backtest(user_id: int, bid: int) -> dict:
     if not row:
         raise HTTPException(404, "Backtest not found")
     p, rep = row["params"], row["result"]
-    return assess(rep["trades"], rep["stats"], p["capital"], profile, p.get("stop_loss_pct"))
+    return assess(rep["trades"], rep["stats"], p["capital"], profile, p.get("stop_loss_pct"), p.get("symbol"))
 
 
 def for_trade_log(user_id: int, capital: float) -> dict:

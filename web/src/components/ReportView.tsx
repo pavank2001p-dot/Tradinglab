@@ -82,7 +82,7 @@ export default function ReportView({ report, kind }: { report: Report; kind: "ba
       {s.wiped_out && (
         <p className="rounded-lg border border-down/50 bg-down/10 p-3 text-sm">
           The account ran out of money during this test, so it stopped early. The trade size is too large for the
-          starting capital; try fewer ounces per trade or a stop loss.
+          starting capital; try a smaller size per trade or a stop loss.
         </p>
       )}
       {s.slipped_stops != null && (

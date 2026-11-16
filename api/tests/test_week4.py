@@ -227,3 +227,18 @@ def test_failed_answer_says_why(client, monkeypatch):
     qid = client.post("/assistant/questions", json={"question": "q"}).json()["id"]
     got = client.get(f"/assistant/questions/{qid}").json()
     assert got["status"] == "error" and "out of credit" in got["answer"]
+
+
+def test_fit_size_is_per_market():
+    # Ounces of gold and units of EURUSD don't compare: across markets the suggestion is a share of the sizes.
+    mixed = [trade(-300, units=20), {**trade(-300, units=10_000), "symbol": "EURUSD", "entry_price": 1.1}]
+    out = fit.assess(mixed, {"max_drawdown_pct": -12}, 10_000, "conservative")
+    assert out["units"] is None and out["suggested_units"] is None and out["unit"] is None
+    assert 0 < out["scale_pct"] < 100
+    # One non-gold market names its own unit.
+    out = fit.assess([{**trade(-300, units=10_000), "symbol": "EURUSD", "entry_price": 1.1}], {"max_drawdown_pct": -12},
+                     10_000, "conservative")
+    assert out["unit"] == "units" and out["suggested_units"] < 10_000
+    # A backtest passes its market in.
+    out = fit.assess([trade(-300, units=20)], {"max_drawdown_pct": -12}, 10_000, "conservative", symbol="XAUUSD")
+    assert out["unit"] == "oz" and out["suggested_units"] == pytest.approx(3.3)
