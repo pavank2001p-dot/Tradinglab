@@ -41,7 +41,7 @@ export default function AccountPage() {
           {(user.name || user.email)[0].toUpperCase()}
         </span>
         <div>
-          <h1 className="text-2xl font-semibold">Hi {user.name || "there"}</h1>
+          <h1 className="page-title">Hi <span className="font-display text-aurora">{user.name || "there"}</span></h1>
           <p className="text-sm text-muted">Signed in as {user.email}{user.google && " with Google"}</p>
         </div>
       </div>

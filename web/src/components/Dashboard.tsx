@@ -99,8 +99,8 @@ export default function Dashboard({ user }: { user: User }) {
       <div className="relative flex flex-wrap items-end justify-between gap-4">
         <div>
           <p className="text-sm text-muted">{now.toLocaleDateString("en-US", { weekday: "long", day: "numeric", month: "long" })}</p>
-          <h1 className="mt-1 text-3xl font-bold tracking-tight sm:text-4xl">
-            {greeting(now)}{user.name ? <>, <span className="bg-gradient-to-r from-gold via-gold-hi to-gold bg-clip-text text-transparent">{user.name}</span></> : null}.
+          <h1 className="page-title mt-1 sm:!text-[2.6rem]">
+            {greeting(now)}{user.name ? <>, <span className="font-display text-aurora">{user.name}</span></> : null}.
           </h1>
           <p className="mt-1 text-muted">Here is your lab. One lap at a time, and take a breath before you decide anything.</p>
         </div>

@@ -143,17 +143,17 @@ export default function Header() {
   ) : (
     <>
       <Link href="/login" className="hidden text-muted transition-colors hover:text-foreground sm:block">{t("Log in")}</Link>
-      <Link href="/signup" className="rounded-full bg-gold px-4 py-1.5 font-medium text-black transition-opacity hover:opacity-90">
-        {t("Sign up free")}
+      <Link href="/signup" className="btn-gold rounded-full px-4 py-1.5 font-semibold">
+        <span className="relative z-10">{t("Sign up free")}</span>
       </Link>
     </>
   );
 
   return (
-    <header className="sticky top-0 z-40 border-b border-border/60 bg-background/80 backdrop-blur-md">
+    <header className="sticky top-0 z-40 border-b border-border/60 bg-background/75 backdrop-blur-xl">
       <div className="mx-auto flex max-w-6xl items-center gap-4 px-4 py-3">
         <Link href="/" className="flex items-center gap-2 font-semibold tracking-tight">
-          <span className="inline-block h-3 w-3 rotate-45 rounded-[3px] bg-gradient-to-br from-gold to-gold-deep" />
+          <span className="inline-block h-3 w-3 rotate-45 rounded-[3px] bg-gradient-to-br from-gold-hi to-gold-deep shadow-[0_0_14px_-2px_var(--gold)]" />
           {APP_NAME}
           {lab && <span key={lab} className="rise-in hidden rounded-full border border-gold/40 px-2 py-0.5 text-[11px] font-medium text-gold sm:inline">{lab}</span>}
         </Link>

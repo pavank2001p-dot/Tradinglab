@@ -72,7 +72,9 @@ body, .card { transition: background-color 0.3s ease, color 0.3s ease, border-co
 body {
   /* A faint wash of light at the top so the page feels open rather than a black box. */
   background:
-    radial-gradient(1200px 500px at 50% -200px, color-mix(in srgb, var(--gold) 6%, transparent), transparent 70%),
+    radial-gradient(1200px 520px at 50% -200px, color-mix(in srgb, var(--gold) 9%, transparent), transparent 70%),
+    radial-gradient(700px 420px at 100% 0, color-mix(in srgb, var(--violet) 7%, transparent), transparent 70%),
+    radial-gradient(700px 480px at 0 30%, color-mix(in srgb, var(--calm) 5%, transparent), transparent 70%),
     var(--background);
   background-attachment: fixed;
   color: var(--foreground);
@@ -86,10 +88,13 @@ h1, h2, h3 { letter-spacing: -0.01em; line-height: 1.25; }
 
 /* Shared calm card. */
 .card {
-  border: 1px solid var(--border);
-  border-radius: 1rem;
-  background: linear-gradient(180deg, var(--surface-2), var(--surface) 60%);
-  box-shadow: inset 0 1px 0 var(--sheen), 0 24px 48px -28px var(--shadow);
+  /* A hairline edge that catches gold at two corners, the same finish as the home page panels. */
+  border: 1px solid transparent;
+  border-radius: 1.25rem;
+  background:
+    linear-gradient(180deg, var(--surface-2), var(--surface) 60%) padding-box,
+    linear-gradient(145deg, color-mix(in srgb, var(--gold) 55%, var(--border)), var(--border) 26%, var(--border) 74%, color-mix(in srgb, var(--gold) 32%, var(--border))) border-box;
+  box-shadow: inset 0 1px 0 var(--sheen), 0 32px 64px -36px var(--shadow);
 }
 
 
@@ -283,3 +288,27 @@ h1, h2, h3 { letter-spacing: -0.01em; line-height: 1.25; }
   .btn-gold::after { display: none; }
   .lux::after, .btn-gold, .btn-ghost { transition: none; }
 }
+
+/* ---- One finish across every page ---- */
+/* Panels written inline (border + surface + large radius) get the same lit surface as .card. */
+:is(main, header, footer) :is([class~="rounded-2xl"], [class~="rounded-3xl"])[class~="border-border"][class~="bg-surface"] {
+  background-image: linear-gradient(180deg, var(--surface-2), var(--surface) 60%);
+  box-shadow: inset 0 1px 0 var(--sheen), 0 28px 56px -36px var(--shadow);
+}
+/* Every solid gold button becomes polished gold: lit from above, darker at the foot. */
+:is(a, button)[class~="bg-gold"] {
+  color: #17130a;
+  background-image: linear-gradient(180deg, var(--gold-hi), var(--gold) 55%, color-mix(in srgb, var(--gold) 80%, var(--gold-deep)));
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.4), inset 0 -1px 0 rgb(0 0 0 / 0.16), 0 8px 20px -12px var(--gold);
+  font-weight: 600;
+}
+/* Page titles: tight, confident, with the display serif on the closing word (see PageHeader). */
+.page-title { font-size: clamp(1.6rem, 3vw, 2.25rem); font-weight: 600; letter-spacing: -0.03em; line-height: 1.08; }
+.page-title .font-display { font-size: 1.14em; padding-right: 0.06em; }
+main :is(h2, h3) { letter-spacing: -0.015em; }
+/* Text fields and selects share one shape and one gold focus ring. */
+main :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="color"]), select, textarea):focus-visible {
+  outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 18%, transparent);
+}
+/* Slim scrollbars in the accent, so long tables and logs match the rest. */
+* { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--foreground) 18%, transparent) transparent; }

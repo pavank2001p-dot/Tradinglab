@@ -41,22 +41,29 @@ export function Icon({ name, className = "h-4 w-4", strokeWidth = 1.8 }: { name:
 }
 
 /** Title block shared by every section page. */
+/** A title with its closing word in the display serif, the signature of the home page headings. */
+export function AccentTitle({ text }: { text: string }) {
+  const words = text.trim().split(" ");
+  if (words.length < 2) return <span className="font-display text-aurora">{text}</span>;
+  const tail = words.length > 4 ? 2 : 1;
+  return <>{words.slice(0, -tail).join(" ")} <span className="font-display text-aurora">{words.slice(-tail).join(" ")}</span></>;
+}
+
 export function PageHeader({ icon, title, subtitle, right }: { icon: string; title: string; subtitle?: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="flex flex-wrap items-start gap-3">
-      <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-2xl border border-gold/30 bg-gradient-to-br from-gold/25 to-gold/5 text-gold">
-        <Icon name={icon} className="h-5 w-5" />
+    <div className="flex flex-wrap items-start gap-4">
+      <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-gold/35 bg-gradient-to-br from-gold/30 to-gold/5 text-gold shadow-[0_12px_28px_-14px_var(--gold),inset_0_1px_0_var(--sheen)]">
+        <Icon name={icon} className="h-6 w-6" />
       </span>
       <div className="min-w-0 flex-1">
-        <h1 className="text-xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
-        {subtitle && <p className="mt-0.5 text-sm text-muted">{subtitle}</p>}
+        <h1 className="page-title"><AccentTitle text={title} /></h1>
+        {subtitle && <p className="mt-1.5 max-w-2xl text-sm leading-relaxed text-muted">{subtitle}</p>}
       </div>
       {right}
     </div>
   );
 }
 
-/** Animates a number from 0 to its value when it first appears or changes. */
 export function CountUp({ value, format, ms = 700 }: { value: number; format: (v: number) => string; ms?: number }) {
   const [shown, setShown] = useState(value);
   const from = useRef(0);
