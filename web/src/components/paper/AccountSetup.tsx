@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { api, fmtUsd, type PaperState } from "@/lib/api";
+import { api, fmtUsd, type Market, type PaperState } from "@/lib/api";
 import { Icon } from "../ui";
 import LeveragePicker, { shortUsd } from "./LeveragePicker";
 
@@ -9,7 +9,7 @@ const PRESETS = [1_000, 5_000, 10_000, 50_000, 100_000, 1_000_000];
 export const SETUP_KEY = "goldlab-paper-setup";
 
 /** First visit to paper trading: choose how much virtual money to start with and the leverage, like opening a broker account. */
-export default function AccountSetup({ state, onDone }: { state: PaperState; onDone: (msg: string | null) => void }) {
+export default function AccountSetup({ state, market, onDone }: { state: PaperState; market: Market; onDone: (msg: string | null) => void }) {
   const [bal, setBal] = useState(state.account.starting_balance);
   const [text, setText] = useState(String(state.account.starting_balance));
   const [lev, setLev] = useState(state.account.leverage);
@@ -45,9 +45,9 @@ export default function AccountSetup({ state, onDone }: { state: PaperState; onD
     <section className="rise-in relative mt-6 overflow-hidden rounded-3xl border border-gold/40 bg-gradient-to-br from-gold/12 via-surface to-surface p-5 sm:p-8">
       <div aria-hidden className="pointer-events-none absolute -right-20 -top-20 h-64 w-64 rounded-full bg-gold/20 blur-3xl" />
       <div className="relative">
-        <p className="text-xs font-semibold uppercase tracking-widest text-gold">Step 1 of 1 · Open your practice account</p>
+        <p className="text-xs font-semibold uppercase tracking-widest text-gold">Open your practice account</p>
         <h2 className="mt-2 text-2xl font-bold tracking-tight sm:text-3xl">How much would you like to practise with?</h2>
-        <p className="mt-1 max-w-2xl text-sm text-muted">It&apos;s virtual money on real gold prices. Pick an amount close to what you&apos;d really trade, so the habits carry over. You can change it any time in Account settings.</p>
+        <p className="mt-1 max-w-2xl text-sm text-muted">It&apos;s virtual money on real prices. Pick an amount close to what you&apos;d really trade, so the habits carry over. You can change it any time in Account settings.</p>
 
         <div className="mt-6 grid gap-6 lg:grid-cols-2">
           <div>
@@ -78,7 +78,7 @@ export default function AccountSetup({ state, onDone }: { state: PaperState; onD
           <div>
             <p className="text-sm font-medium">Leverage</p>
             <div className="mt-2">
-              <LeveragePicker value={lev} onPick={setLev} balance={bal} price={state.price?.bid ?? 2000}
+              <LeveragePicker value={lev} onPick={setLev} balance={bal} price={state.price?.bid} market={market}
                 stopOut={state.settings.stop_out_pct} marginCall={state.settings.margin_call_pct} />
             </div>
           </div>

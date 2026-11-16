@@ -620,8 +620,9 @@ function Check({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 }
 
 /** Leverage, adding or taking out virtual money, and starting over. */
-function Settings({ state, busy, act, onClose }: {
+function Settings({ state, market, busy, act, onClose }: {
   state: PaperState;
+  market: Market;
   busy: boolean;
   act: (fn: () => Promise<unknown>, done?: string) => Promise<boolean>;
   onClose: () => void;
@@ -655,7 +656,7 @@ function Settings({ state, busy, act, onClose }: {
         <h3 className="flex items-center gap-2 text-sm font-medium"><Icon name="layers" className="h-4 w-4 text-gold" />Leverage</h3>
         <p className="mt-1 text-xs text-muted">Applies to open positions too, as it does at a broker.</p>
         <div className="mt-3">
-          <LeveragePicker value={a.leverage} disabled={busy} balance={a.equity} price={state.price?.bid ?? 2000}
+          <LeveragePicker value={a.leverage} disabled={busy} balance={a.equity} price={state.price?.bid} market={market}
             stopOut={st.stop_out_pct} marginCall={st.margin_call_pct}
             onPick={(l) => act(() => api.paperLeverage(l), `Leverage set to 1:${l}`)} />
         </div>
@@ -875,7 +876,7 @@ export default function PaperPage() {
 
       {state?.challenge && <div className="mt-6"><RulePanel ch={state.challenge} compact /></div>}
       {state && !state.challenge && !setupDone && !resetOpen && state.account.closed_trades === 0 && !state.positions.length && !state.orders.length && (
-        <AccountSetup state={state} onDone={async (m) => { setSetupDone(true); if (m) { await load(); toast(m, { tone: "fill" }); } }} />
+        <AccountSetup state={state} market={market} onDone={async (m) => { setSetupDone(true); if (m) { await load(); toast(m, { tone: "fill" }); } }} />
       )}
       {state?.account.margin_call && (
         <div role="alert" className="rise-in mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-down/50 bg-down/10 p-4">
@@ -888,7 +889,7 @@ export default function PaperPage() {
           <button onClick={() => setResetOpen(true)} className="rounded-full border border-down/50 px-3 py-1.5 text-sm">Account settings</button>
         </div>
       )}
-      {state && resetOpen && <Settings state={state} busy={busy} act={act} onClose={() => setResetOpen(false)} />}
+      {state && resetOpen && <Settings state={state} market={market} busy={busy} act={act} onClose={() => setResetOpen(false)} />}
       {error && !state && <p className="mt-6 text-sm text-down">{error}</p>}
       {!state && !error && <div className="mt-6 h-40 animate-pulse rounded-2xl bg-surface" />}
 
