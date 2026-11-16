@@ -180,10 +180,6 @@ h1, h2, h3 { letter-spacing: -0.01em; line-height: 1.25; }
   .chart-swap, .tour-hole, body, .card { transition: none; }
 }
 
-/* Home: the rotating market word in the headline slides up into place. */
-@keyframes word-in { from { opacity: 0; transform: translateY(0.35em); filter: blur(4px); } to { opacity: 1; transform: none; filter: none; } }
-.word-in { animation: word-in 0.55s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
-
 /* Home: an endless strip of markets. Two copies of the row slide left by one copy's width. */
 @keyframes marquee { to { transform: translateX(-50%); } }
 .marquee-track { animation: marquee 60s linear infinite; }
@@ -204,7 +200,7 @@ h1, h2, h3 { letter-spacing: -0.01em; line-height: 1.25; }
 .glow-drift { animation: glow-drift 14s ease-in-out infinite; }
 
 @media (prefers-reduced-motion: reduce) {
-  .word-in, .marquee-track, .glow-drift { animation: none; }
+  .marquee-track, .glow-drift { animation: none; }
   [data-reveal], .lift { transition: none; }
   [data-reveal="hidden"] { opacity: 1; transform: none; }
   .lift:hover { transform: none; }

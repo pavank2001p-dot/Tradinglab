@@ -6,7 +6,6 @@ import PriceTicker from "@/components/PriceTicker";
 import Reveal from "@/components/Reveal";
 import CountUp from "@/components/home/CountUp";
 import MarketStrip from "@/components/home/MarketStrip";
-import RotatingWord from "@/components/home/RotatingWord";
 import { Icon } from "@/components/ui";
 import { LOOP, STAGE_ICON } from "@/lib/loop";
 
@@ -15,9 +14,6 @@ const habits = [
   { icon: "scale", title: "Size from the stop", body: "Let the distance to your stop set the size, so one trade can't hurt much." },
   { icon: "clock", title: "There's always another trade", body: "Missing a move costs nothing. Taking a rushed one can." },
 ];
-
-/** The motto names every market in turn; screen readers and the first paint get "any market". */
-const MARKET_WORDS = ["any market", "gold", "stocks", "forex", "crypto", "indices", "oil"];
 
 const STATS: { value: number; prefix?: string; label: string }[] = [
   { value: 5, label: "Market labs" },
@@ -38,8 +34,7 @@ export default function Home() {
           </span>
           <h1 className="rise-in mt-5 max-w-3xl text-[2.15rem] font-bold leading-[1.15] tracking-tight [animation-delay:80ms] sm:text-6xl">
             Master{" "}
-            <RotatingWord words={MARKET_WORDS} label="any market"
-              wordClass="bg-gradient-to-r from-gold via-gold-hi to-gold bg-clip-text text-transparent" />
+            <span className="bg-gradient-to-r from-gold via-gold-hi to-gold bg-clip-text text-transparent">the markets</span>
             <br />
             before you risk a cent.
           </h1>
@@ -53,7 +48,7 @@ export default function Home() {
               <Icon name="arrow" className="h-4 w-4 transition-transform duration-300 group-hover:translate-x-0.5" />
             </Link>
             <Link href="/chart" className="w-full rounded-full border border-border bg-surface/60 px-6 py-3 text-center sm:w-auto font-medium backdrop-blur transition-colors hover:border-gold/40">
-              Explore the markets
+              See all markets
             </Link>
           </div>
           <dl className="rise-in mt-12 grid max-w-3xl grid-cols-2 gap-y-6 border-t border-border pt-8 [animation-delay:320ms] sm:grid-cols-4">
