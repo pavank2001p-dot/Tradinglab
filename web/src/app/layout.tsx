@@ -32,7 +32,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
       <body className="flex min-h-screen flex-col antialiased">
         <UserProvider>
           <Header />
-          <main className="flex-1">{children}</main>
+          <main className="flex-1 overflow-x-clip">{children}</main>
           <Footer />
           <Toaster />
           <Tour />

@@ -206,3 +206,31 @@ h1, h2, h3 { letter-spacing: -0.01em; line-height: 1.25; }
   .lift:hover { transform: none; }
 }
 @media (prefers-reduced-motion: reduce) { .marquee { overflow-x: auto; } }
+
+/* Extra accents for the home page, so each lab and each step has its own colour beside the gold. */
+:root { --violet: #a78bfa; --rose: #f08aa8; }
+:root[data-theme="light"] { --violet: #6d4fd0; --rose: #c2476e; }
+
+/* A toned tile, number or label: set --tone on the element and it colours itself. */
+.tone-tile { color: var(--tone); border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 26%, transparent), color-mix(in srgb, var(--tone) 6%, transparent)); }
+.tone-text { color: var(--tone); }
+.tone-card { position: relative; overflow: hidden; }
+.tone-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, var(--tone), transparent 85%); }
+.tone-card::after { content: ""; position: absolute; top: -60px; left: -40px; width: 180px; height: 140px; border-radius: 50%;
+  background: color-mix(in srgb, var(--tone) 16%, transparent); filter: blur(40px); pointer-events: none; }
+@media (hover: hover) { .tone-card.lift:hover { border-color: color-mix(in srgb, var(--tone) 55%, transparent); } }
+
+/* Headline gradient that slowly shifts through the accents. */
+@keyframes hue-slide { to { background-position: 200% 0; } }
+.text-aurora { background: linear-gradient(90deg, var(--gold), var(--gold-hi), var(--rose), var(--violet), var(--gold)) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: hue-slide 12s linear infinite; }
+
+/* The hero board hovers gently; its sparklines draw themselves once. */
+@keyframes float-slow { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+.float-slow { animation: float-slow 7s ease-in-out infinite; }
+@keyframes spark-draw { from { stroke-dasharray: 0 1; } to { stroke-dasharray: 1 0; } }
+.spark-draw { animation: spark-draw 1.4s 0.3s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) { .text-aurora, .float-slow, .spark-draw { animation: none; } }
