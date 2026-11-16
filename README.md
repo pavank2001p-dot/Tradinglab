@@ -80,6 +80,10 @@ api/   FastAPI + Postgres (Railway). Auth, price data, and later backtests, news
   payoff and care around big releases) and names the weakest. The remix replays the user's trading days against
   each challenge plan's phase 1 rules in their real order, then 1,000 times as 60 days drawn at random from their
   own, and shows pass odds, which limit breaks most, and a fan of sample paths. Only closed results are counted.
+- **Stay or bail** (`api/app/stayorbail.py`, `/risk`): after the risk quiz, the user puts their own money (the
+  Money Mirror stake by default) into one of four of gold's worst 12-month falls since 1971, picked from monthly
+  closes and shown without dates, and walks it a month at a time with Stay and Bail buttons. The month they bail is
+  compared with the drawdown limit the quiz set, then the dates, the year-end value and the year after are shown.
 - **Trade log** (`api/app/trades.py`): manual entry or CSV import (MetaTrader 4/5 and most broker exports; gold
   rows only; re-imports skip known tickets). Produces the same report as a backtest (`api/app/report.py`).
 

@@ -670,7 +670,10 @@ export type Dna = {
   scores: { key: string; label: string; score: number; text: string }[]; plans: DnaPlan[];
 };
 
+export type BailEpisode = { start: number; price: number; window: number; worst_pct: number; months: { t: number; level: number }[] };
+
 export const api = {
+  stayOrBail: () => call<{ episodes: BailEpisode[] }>("/risk/stay-or-bail"),
   propDna: () => call<Dna>("/prop/dna"),
   coachTwin: () => call<Twin>("/coach/twin"),
   daily: () => call<DailyCandle>("/daily"),
