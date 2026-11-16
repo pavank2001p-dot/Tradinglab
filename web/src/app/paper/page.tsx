@@ -16,7 +16,7 @@ import MarketPicker from "@/components/markets/MarketPicker";
 import { GOLD, unitsLabel, useMarket } from "@/lib/markets";
 import AccountSetup, { SETUP_KEY } from "@/components/paper/AccountSetup";
 import RulePanel from "@/components/prop/RulePanel";
-import LeveragePicker from "@/components/paper/LeveragePicker";
+import LeveragePicker, { shortUsd } from "@/components/paper/LeveragePicker";
 import { toast } from "@/components/Toaster";
 import { useUser } from "@/lib/useUser";
 import AlertsCard from "@/components/practice/AlertsCard";
@@ -35,9 +35,8 @@ const POLL_MS = 5000;
 const SIZE_STEPS = [0.2, 1, 2, 10, 20];
 /** Short unit for sizes: "oz" for metals, otherwise "shares", "barrels", "units"... */
 const unitShort = (m: Pick<Market, "unit">, n?: number) => (m.unit === "ounce" ? "oz" : unitsLabel(m, n));
-const BALANCES = [1_000, 10_000, 100_000, 1_000_000, 10_000_000];
-const short = (v: number) =>
-  v >= 1e12 ? `$${+(v / 1e12).toFixed(2)}T` : v >= 1e9 ? `$${+(v / 1e9).toFixed(2)}B` : v >= 1e6 ? `$${+(v / 1e6).toFixed(2)}M` : v >= 1e3 ? `$${+(v / 1e3).toFixed(1)}k` : `$${v}`;
+const BALANCES = [1_000, 10_000, 100_000, 1_000_000, 10_000_000, 1_000_000_000, 1_000_000_000_000];
+const short = shortUsd;
 const REASON: Record<string, string> = {
   manual: "Closed by you",
   partial: "Part closed",
@@ -620,8 +619,9 @@ function Check({ ok, children }: { ok: boolean; children: React.ReactNode }) {
 }
 
 /** Leverage, adding or taking out virtual money, and starting over. */
-function Settings({ state, busy, act, onClose }: {
+function Settings({ state, market, busy, act, onClose }: {
   state: PaperState;
+  market: Market;
   busy: boolean;
   act: (fn: () => Promise<unknown>, done?: string) => Promise<boolean>;
   onClose: () => void;
@@ -655,7 +655,7 @@ function Settings({ state, busy, act, onClose }: {
         <h3 className="flex items-center gap-2 text-sm font-medium"><Icon name="layers" className="h-4 w-4 text-gold" />Leverage</h3>
         <p className="mt-1 text-xs text-muted">Applies to open positions too, as it does at a broker.</p>
         <div className="mt-3">
-          <LeveragePicker value={a.leverage} disabled={busy} balance={a.equity} price={state.price?.bid ?? 2000}
+          <LeveragePicker value={a.leverage} disabled={busy} balance={a.equity} price={state.price?.bid} market={market}
             stopOut={st.stop_out_pct} marginCall={st.margin_call_pct}
             onPick={(l) => act(() => api.paperLeverage(l), `Leverage set to 1:${l}`)} />
         </div>
@@ -684,7 +684,7 @@ function Settings({ state, busy, act, onClose }: {
         <p className="mt-1 text-xs text-muted">It&apos;s virtual, so add as much as you like, up to {short(st.max_balance)}. Deposits count toward what you started with, so your return stays honest.</p>
         <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" className={`${input} mt-3`} aria-label="Amount in dollars" />
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {[1_000, 10_000, 100_000, 1_000_000].map((v) => (
+          {[1_000, 10_000, 100_000, 1_000_000, 1_000_000_000].map((v) => (
             <button key={v} type="button" onClick={() => setAmount(String(v))}
               className={`rounded-full border px-2.5 py-0.5 text-xs tabular-nums transition ${amt === v ? "border-gold text-foreground" : "border-border text-muted hover:border-muted"}`}>{short(v)}</button>
           ))}
@@ -703,7 +703,7 @@ function Settings({ state, busy, act, onClose }: {
         <p className="mt-1 text-xs text-muted">A fresh account with any balance and leverage. This deletes every paper position, order and result{state.challenge ? ", and ends your prop challenge" : ""}.</p>
         <input value={balance} onChange={(e) => { setBalance(e.target.value); setConfirm(false); }} inputMode="decimal" className={`${input} mt-3`} aria-label="Starting balance in dollars" />
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {BALANCES.map((v) => (
+          {BALANCES.filter((v) => v <= st.max_balance).map((v) => (
             <button key={v} type="button" onClick={() => { setBalance(String(v)); setConfirm(false); }}
               className={`rounded-full border px-2.5 py-0.5 text-xs tabular-nums transition ${bal === v ? "border-gold text-foreground" : "border-border text-muted hover:border-muted"}`}>{short(v)}</button>
           ))}
@@ -875,7 +875,7 @@ export default function PaperPage() {
 
       {state?.challenge && <div className="mt-6"><RulePanel ch={state.challenge} compact /></div>}
       {state && !state.challenge && !setupDone && !resetOpen && state.account.closed_trades === 0 && !state.positions.length && !state.orders.length && (
-        <AccountSetup state={state} onDone={async (m) => { setSetupDone(true); if (m) { await load(); toast(m, { tone: "fill" }); } }} />
+        <AccountSetup state={state} market={market} onDone={async (m) => { setSetupDone(true); if (m) { await load(); toast(m, { tone: "fill" }); } }} />
       )}
       {state?.account.margin_call && (
         <div role="alert" className="rise-in mt-6 flex flex-wrap items-center gap-3 rounded-2xl border border-down/50 bg-down/10 p-4">
@@ -888,7 +888,7 @@ export default function PaperPage() {
           <button onClick={() => setResetOpen(true)} className="rounded-full border border-down/50 px-3 py-1.5 text-sm">Account settings</button>
         </div>
       )}
-      {state && resetOpen && <Settings state={state} busy={busy} act={act} onClose={() => setResetOpen(false)} />}
+      {state && resetOpen && <Settings state={state} market={market} busy={busy} act={act} onClose={() => setResetOpen(false)} />}
       {error && !state && <p className="mt-6 text-sm text-down">{error}</p>}
       {!state && !error && <div className="mt-6 h-40 animate-pulse rounded-2xl bg-surface" />}
 
