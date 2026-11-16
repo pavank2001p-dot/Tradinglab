@@ -3,7 +3,7 @@ export const metadata = { title: "Disclaimer · Trading Lab" };
 export default function DisclaimerPage() {
   return (
     <div className="mx-auto max-w-3xl px-4 py-10 text-sm leading-relaxed">
-      <h1 className="text-2xl font-semibold">Disclaimer</h1>
+      <h1 className="page-title"><span className="font-display text-aurora">Disclaimer</span></h1>
       <p className="mt-2 text-muted">Please read this before using Trading Lab.</p>
 
       <h2 className="mt-8 text-base font-medium">Education, not advice</h2>

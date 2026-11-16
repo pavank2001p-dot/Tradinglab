@@ -67,7 +67,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
         <>
           <a
             href={`/api/auth/google/start?next=${encodeURIComponent(next)}`}
-            className="mt-6 flex w-full items-center justify-center gap-2 rounded-lg border border-border bg-background py-2 font-medium transition hover:border-gold"
+            className="btn-ghost mt-7 flex w-full items-center justify-center gap-2 rounded-full py-3 font-medium"
           >
             <GoogleLogo />
             Continue with Google
@@ -79,7 +79,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
           </div>
         </>
       )}
-      <form onSubmit={onSubmit} className={`${google ? "mt-5" : "mt-6"} space-y-4`}>
+      <form onSubmit={onSubmit} className={`${google ? "mt-5" : "mt-7"} space-y-4`}>
         {signup && (
           <label className="block text-sm">
             <span className="text-muted">Name</span>
@@ -110,10 +110,10 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
         </label>
         {error && <p className="text-sm text-down">{error}</p>}
         <button disabled={busy} className={authButton}>
-          {busy ? "Please wait…" : signup ? "Sign up" : "Log in"}
+          <span className="relative z-10">{busy ? "Please wait…" : signup ? "Create my account" : "Log in"}</span>
         </button>
       </form>
-      <p className="mt-4 text-sm text-muted">
+      <p className="mt-6 text-center text-sm text-muted">
         {signup ? (
           <>Already have an account? <Link href="/login" className="text-gold">Log in</Link></>
         ) : (
