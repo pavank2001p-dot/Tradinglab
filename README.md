@@ -53,6 +53,13 @@ api/   FastAPI + Postgres (Railway). Auth, price data, and later backtests, news
   starts on a fresh account. A live rule panel on the paper page warns about trades without stops or stops that would
   break a limit, links the lesson for the rule at risk, and a pass gives a shareable certificate image. Balance and
   leverage are locked during a challenge; starting over or leaving ends it.
+- **Verified record and Skill Passport** (`api/app/record.py`, `/record`, public `/verify/{id}`): every closed paper
+  trade, reset, deposit and finished prop challenge is sealed into an append-only ledger where each entry holds the
+  SHA-256 of the one before, so editing or removing any entry breaks the chain. Starting over doesn't erase it. Users
+  issue reports signed with a key derived from `JWT_SECRET` (HMAC-SHA256 over the snapshot and the ledger head);
+  the public page re-walks the chain, re-checks the signature and recomputes the stats, and shows Verified, Does not
+  check out, or Withdrawn. No email is shown. Skill Passport levels (Bronze, Silver, Gold) come from the same
+  ledger, reward process (stops kept, small losses, shallow drawdowns), and leave strategy agent trades out.
 - **Daily Candle** (`api/app/daily.py`, home page): one real moment of gold history a day, the same for everyone. The
   chart stops at an hour where the next 12 hours moved a lot (chosen once per day from 40 seeded guesses and stored);
   the date and price level are hidden until the player picks buy, sell or wait. Then the next 12 hours play out, with
@@ -132,6 +139,15 @@ api/   FastAPI + Postgres (Railway). Auth, price data, and later backtests, news
   Asked to build a strategy, it writes its own builder rules, tests them with `test_rules` (results for the whole
   period, the earlier 70% and the last 30% alone, next to buy and hold), adjusts a few times, then saves the version
   it describes with `save_strategy` and links to it in the builder (`/strategies/builder?id=<id>`).
+- **Language and local gold price** (`web/src/lib/i18n.tsx`, `web/src/lib/localPrice.ts`, `api/app/fx.py`): the
+  settings menu (the moon or sun button) picks a language, a currency and a gold unit (troy ounce, gram, 10 grams,
+  tola, kilogram). The English text in the code is the translation key, so untranslated text stays in English.
+  To add a language, copy `web/src/i18n/hi.ts`, translate the values, and add it to `CATALOGS` and `LANGS`;
+  `npm run i18n:check` (also run in CI) lists strings a catalog is missing. Right-to-left languages flip the layout;
+  charts stay left to right. Hindi and Arabic are AI drafts marked as such until a native speaker checks them.
+  The gold price is also shown converted, for example INR per 10 grams or AED per gram, as spot before local taxes
+  and duties. Rates are ECB reference rates via Frankfurter (`FX_URL`), cached six hours; AED and SAR use their
+  dollar pegs. Trading and reports stay in US dollars per ounce.
 - **Disclaimer** page at `/disclaimer`, linked from the footer and the assistant.
 
 ## Run locally
