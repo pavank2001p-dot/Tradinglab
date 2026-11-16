@@ -179,3 +179,107 @@ h1, h2, h3 { letter-spacing: -0.01em; line-height: 1.25; }
   .tick-up, .tick-down, .toast-in, .check-draw, .spark, .badge-pop, .shimmer { animation: none; }
   .chart-swap, .tour-hole, body, .card { transition: none; }
 }
+
+/* Home: an endless strip of markets. Two copies of the row slide left by one copy's width. */
+@keyframes marquee { to { transform: translateX(-50%); } }
+.marquee-track { animation: marquee 60s linear infinite; }
+.marquee:hover .marquee-track, .marquee:focus-within .marquee-track { animation-play-state: paused; }
+
+/* Sections fade up the first time they scroll into view (see Reveal.tsx). */
+[data-reveal] { transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.2, 0.8, 0.3, 1); }
+[data-reveal="hidden"] { opacity: 0; transform: translateY(24px); }
+
+/* Cards that lead somewhere lift a little under the pointer. */
+.lift { transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.3, 1), border-color 0.3s ease, box-shadow 0.3s ease; }
+@media (hover: hover) {
+  .lift:hover { transform: translateY(-3px); box-shadow: inset 0 1px 0 var(--sheen), 0 30px 60px -30px color-mix(in srgb, var(--gold) 35%, var(--shadow)); }
+}
+
+/* The hero's glow drifts slowly, so the page feels alive without anything demanding attention. */
+@keyframes glow-drift { 0%, 100% { transform: translate(-50%, 0) scale(1); opacity: 0.9; } 50% { transform: translate(-46%, 18px) scale(1.08); opacity: 1; } }
+.glow-drift { animation: glow-drift 14s ease-in-out infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  .marquee-track, .glow-drift { animation: none; }
+  [data-reveal], .lift { transition: none; }
+  [data-reveal="hidden"] { opacity: 1; transform: none; }
+  .lift:hover { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) { .marquee { overflow-x: auto; } }
+
+/* Extra accents for the home page, so each lab and each step has its own colour beside the gold. */
+:root { --violet: #a78bfa; --rose: #f08aa8; }
+:root[data-theme="light"] { --violet: #6d4fd0; --rose: #c2476e; }
+
+/* A toned tile, number or label: set --tone on the element and it colours itself. */
+.tone-tile { color: var(--tone); border: 1px solid color-mix(in srgb, var(--tone) 35%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--tone) 26%, transparent), color-mix(in srgb, var(--tone) 6%, transparent)); }
+.tone-text { color: var(--tone); }
+.tone-card { position: relative; overflow: hidden; }
+.tone-card::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 2px;
+  background: linear-gradient(90deg, var(--tone), transparent 85%); }
+.tone-card::after { content: ""; position: absolute; top: -60px; left: -40px; width: 180px; height: 140px; border-radius: 50%;
+  background: color-mix(in srgb, var(--tone) 16%, transparent); filter: blur(40px); pointer-events: none; }
+@media (hover: hover) { .tone-card.lift:hover { border-color: color-mix(in srgb, var(--tone) 55%, transparent); } }
+
+/* Headline gradient that slowly shifts through the accents. */
+@keyframes hue-slide { to { background-position: 200% 0; } }
+.text-aurora { background: linear-gradient(90deg, var(--gold), var(--gold-hi), var(--rose), var(--violet), var(--gold)) 0 0 / 200% 100%;
+  -webkit-background-clip: text; background-clip: text; color: transparent; animation: hue-slide 12s linear infinite; }
+
+/* The hero board hovers gently; its sparklines draw themselves once. */
+@keyframes float-slow { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
+.float-slow { animation: float-slow 7s ease-in-out infinite; }
+@keyframes spark-draw { from { stroke-dasharray: 0 1; } to { stroke-dasharray: 1 0; } }
+.spark-draw { animation: spark-draw 1.4s 0.3s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) { .text-aurora, .float-slow, .spark-draw { animation: none; } }
+
+/* ---- Home page: refined, premium layer ---- */
+/* The display serif, used in italic for the one phrase in a heading that carries the idea. */
+.font-display { font-family: var(--font-display), "Iowan Old Style", Georgia, serif; font-weight: 400; font-style: italic; letter-spacing: -0.01em; }
+.h-section { font-size: clamp(1.75rem, 3.6vw, 2.75rem); font-weight: 600; letter-spacing: -0.025em; line-height: 1.1; }
+.h-section .font-display { font-size: 1.12em; }
+.eyebrow { display: inline-flex; align-items: center; gap: 0.6rem; font-size: 0.7rem; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); }
+.eyebrow::before { content: ""; width: 1.75rem; height: 1px; background: linear-gradient(90deg, transparent, var(--gold)); }
+
+/* Glass panels with a hairline edge that catches the light, like brushed metal. */
+.lux { position: relative; border-radius: 1.5rem; isolation: isolate;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--surface-2) 92%, transparent), color-mix(in srgb, var(--surface) 96%, transparent));
+  box-shadow: inset 0 1px 0 var(--sheen), 0 40px 80px -40px var(--shadow); }
+.lux::before { content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none; z-index: 2;
+  background: linear-gradient(145deg, color-mix(in srgb, var(--tone, var(--gold)) 70%, transparent), color-mix(in srgb, var(--foreground) 10%, transparent) 30%, color-mix(in srgb, var(--foreground) 6%, transparent) 70%, color-mix(in srgb, var(--tone, var(--gold)) 40%, transparent));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0); -webkit-mask-composite: xor; mask-composite: exclude; }
+/* A soft light follows the pointer across a panel (see Spotlight.tsx). */
+.lux::after { content: ""; position: absolute; inset: 0; border-radius: inherit; pointer-events: none; z-index: -1; opacity: 0; transition: opacity 0.4s ease;
+  background: radial-gradient(420px circle at var(--mx, 50%) var(--my, 0%), color-mix(in srgb, var(--tone, var(--gold)) 16%, transparent), transparent 65%); }
+@media (hover: hover) { .lux:hover::after { opacity: 1; } }
+.lux-static::after { opacity: 0.7; }
+
+/* Fine film grain over the hero, so gradients look printed rather than flat. */
+.grain { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E"); opacity: 0.07; mix-blend-mode: overlay; }
+:root[data-theme="light"] .grain { opacity: 0.12; mix-blend-mode: multiply; }
+
+/* The primary button: polished gold with a slow sheen passing over it. */
+.btn-gold { position: relative; overflow: hidden; color: #17130a;
+  background: linear-gradient(180deg, var(--gold-hi), var(--gold) 55%, color-mix(in srgb, var(--gold) 80%, var(--gold-deep)));
+  box-shadow: 0 14px 34px -14px var(--gold), inset 0 1px 0 rgb(255 255 255 / 0.45), inset 0 -1px 0 rgb(0 0 0 / 0.18); transition: transform 0.25s ease, filter 0.25s ease, box-shadow 0.25s ease; }
+.btn-gold::after { content: ""; position: absolute; inset: 0; background: linear-gradient(110deg, transparent 35%, rgb(255 255 255 / 0.5) 50%, transparent 65%); transform: translateX(-120%); animation: sheen 5.5s ease-in-out infinite; }
+@keyframes sheen { 0%, 60% { transform: translateX(-120%); } 85%, 100% { transform: translateX(120%); } }
+@media (hover: hover) { .btn-gold:hover { transform: translateY(-1px); filter: brightness(1.05); box-shadow: 0 20px 44px -14px var(--gold), inset 0 1px 0 rgb(255 255 255 / 0.45); } }
+.btn-ghost { border: 1px solid color-mix(in srgb, var(--foreground) 16%, transparent); background: color-mix(in srgb, var(--surface) 55%, transparent); backdrop-filter: blur(10px); transition: border-color 0.25s ease, background-color 0.25s ease; }
+.btn-ghost:hover { border-color: color-mix(in srgb, var(--gold) 60%, transparent); background: color-mix(in srgb, var(--gold) 8%, var(--surface)); }
+
+/* Small drawn pieces inside the showcase tiles. */
+@keyframes line-draw { from { stroke-dashoffset: 1; } to { stroke-dashoffset: 0; } }
+.line-draw { stroke-dasharray: 1; animation: line-draw 2.2s ease-out both; }
+@keyframes candle-in { from { opacity: 0; transform: translateY(6px) scaleY(0.6); } to { opacity: 1; transform: none; } }
+.candle-in { transform-box: fill-box; transform-origin: center; animation: candle-in 0.5s ease-out both; }
+@keyframes ring-fill { from { stroke-dashoffset: var(--len); } }
+.ring-fill { animation: ring-fill 1.4s cubic-bezier(0.2, 0.8, 0.3, 1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .btn-gold::after, .line-draw, .candle-in, .ring-fill { animation: none; }
+  .btn-gold::after { display: none; }
+  .lux::after, .btn-gold, .btn-ghost { transition: none; }
+}

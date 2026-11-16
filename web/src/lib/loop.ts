@@ -7,7 +7,7 @@ export const STAGE_ICON: Record<LabStageKey | "limits", string> = {
 
 /** The five stages for visitors who aren't signed in: what each is for and where it lives. */
 export const LOOP = [
-  { key: "spark", name: "Spark", body: "Find an idea: a lesson from gold's history, a headline, or a question to the AI.",
+  { key: "spark", name: "Spark", body: "Find an idea: a lesson from market history, a headline, or a question to the AI.",
     links: [{ href: "/learn", label: "Lessons" }, { href: "/news", label: "News" }, { href: "/assistant", label: "Assistant" }] },
   { key: "build", name: "Build", body: "Turn it into rules of your own, from a template or from scratch.",
     links: [{ href: "/strategies/builder", label: "Strategy studio" }] },
