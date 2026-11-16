@@ -22,7 +22,7 @@ const qty = (n: number) =>
 
 /** Leverage grouped the way brokers present it, from none to the high ratios offshore accounts offer. */
 export const TIERS: { label: string; note: string; tone: string; levels: number[] }[] = [
-  { label: "No leverage", note: "Like owning gold outright", tone: "var(--up)", levels: [1] },
+  { label: "No leverage", note: "Like owning the asset outright", tone: "var(--up)", levels: [1] },
   { label: "Regulated retail", note: "EU, UK and Australian brokers cap gold at 1:20 for retail clients", tone: "var(--calm)", levels: [2, 5, 10, 20] },
   { label: "Typical offshore", note: "Common at brokers outside those rules", tone: "var(--gold)", levels: [30, 50, 100, 200] },
   { label: "Very high", note: "Small moves can wipe out the account", tone: "var(--down)", levels: [300, 500, 1000] },

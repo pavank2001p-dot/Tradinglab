@@ -63,10 +63,14 @@ export default function FitPanel({ load, deps }: { load: () => Promise<Fit>; dep
       {fit.notes.map((n) => (
         <p key={n} className="mt-2 text-sm text-muted">{n}</p>
       ))}
-      {fit.suggested_units != null && (
+      {fit.suggested_units != null ? (
         <p className="mt-2 text-sm">
-          At about <strong>{fit.suggested_units} oz</strong> per trade instead of {fit.units} oz, these results would
-          have stayed inside your limits.
+          At about <strong>{fit.suggested_units} {fit.unit ?? "oz"}</strong> per trade instead of {fit.units} {fit.unit ?? "oz"}, these
+          results would have stayed inside your limits.
+        </p>
+      ) : fit.scale_pct != null && (
+        <p className="mt-2 text-sm">
+          At about <strong>{fit.scale_pct}%</strong> of the sizes you traded, these results would have stayed inside your limits.
         </p>
       )}
       <p className="mt-2 text-xs text-muted">Based on past results only. This is not a recommendation to trade.</p>

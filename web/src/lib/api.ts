@@ -249,6 +249,8 @@ export type Fit = {
   trades_checked: number;
   units: number | null;
   suggested_units: number | null;
+  unit?: string | null;
+  scale_pct?: number | null;
 };
 export type Turn = { role: "user" | "assistant"; content: string };
 export type AssistantStatus = { configured: boolean; limit: number; used_today: number; remaining: number };
