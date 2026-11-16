@@ -1,5 +1,6 @@
 "use client";
 
+import StayOrBail from "@/components/StayOrBail";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import SignInPrompt from "@/components/SignInPrompt";
@@ -332,6 +333,8 @@ function Result({ p, profiles, onRetake }: { p: RiskProfile; profiles: Record<st
           </ul>
         </section>
       </div>
+
+      <StayOrBail limitPct={p.max_drawdown_pct} />
 
       <p className="text-xs text-muted">
         These are general guidelines for learning, not personal financial advice. Your backtests and trade log are checked against them.
