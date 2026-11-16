@@ -1,10 +1,9 @@
 import Link from "next/link";
 import DailyCandle from "@/components/DailyCandle";
 import HomeTop, { SignedOut } from "@/components/HomeTop";
-import PriceChart from "@/components/PriceChart";
-import PriceTicker from "@/components/PriceTicker";
 import Reveal from "@/components/Reveal";
 import CountUp from "@/components/home/CountUp";
+import HomeChart from "@/components/home/HomeChart";
 import MarketStrip from "@/components/home/MarketStrip";
 import { Icon } from "@/components/ui";
 import { LOOP, STAGE_ICON } from "@/lib/loop";
@@ -63,10 +62,7 @@ export default function Home() {
         <div className="relative mt-10"><MarketStrip /></div>
       </section>} />
 
-      <section data-tour="chart" className="card mt-6 space-y-4 p-4 sm:p-6">
-        <SignedOut><PriceTicker /></SignedOut>
-        <PriceChart height={380} />
-      </section>
+      <HomeChart />
 
       <Reveal as="section" className="mt-20">
         <p className="text-xs font-medium uppercase tracking-wider text-gold">How it works</p>
