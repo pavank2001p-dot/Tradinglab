@@ -417,3 +417,6 @@ CREATE TABLE IF NOT EXISTS page_views (
     views  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (day, path, source)
 );
+
+-- The stop a position had before it was first moved further away (app/twin.py trades the plan with it).
+ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS planned_stop DOUBLE PRECISION;

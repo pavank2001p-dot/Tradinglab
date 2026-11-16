@@ -650,7 +650,17 @@ export type Funnel = {
   page_days: number;
 };
 
+export type TwinDay = { day: string; trades: number; pnl: number; wins: number; broken: number };
+export type Twin = {
+  you: number; twin: number; limit_pct: number;
+  curve: { t: number; you: number; twin: number }[];
+  costs: { tag: CoachTag; label: string; cost: number; trades: number }[];
+  trades: { id: number; symbol: string; side: "long" | "short"; closed_at: string; pnl: number; twin_pnl: number; rule: string; tags: CoachTag[] }[];
+  days: TwinDay[];
+};
+
 export const api = {
+  coachTwin: () => call<Twin>("/coach/twin"),
   daily: () => call<DailyCandle>("/daily"),
   playDaily: (choice: DailyChoice) => call<DailyResult>("/daily", { method: "POST", body: JSON.stringify({ choice }) }),
   prefs: () => call<Record<string, unknown>>("/prefs"),
