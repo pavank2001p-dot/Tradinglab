@@ -647,7 +647,19 @@ export type Twin = {
   days: TwinDay[];
 };
 
+export type DnaResult = "pass" | "daily" | "overall" | "open";
+export type DnaPlan = {
+  plan: string; label: string; rules: { targets: number[]; daily_loss_pct: number; max_loss_pct: number; min_days: number };
+  actual: DnaResult; actual_days: number; actual_path: number[];
+  odds: Record<DnaResult, number>; paths: { result: DnaResult; path: number[] }[];
+};
+export type Dna = {
+  ready: boolean; trades: number; needed?: number; days?: number; limit_pct?: number; weakest?: string;
+  scores: { key: string; label: string; score: number; text: string }[]; plans: DnaPlan[];
+};
+
 export const api = {
+  propDna: () => call<Dna>("/prop/dna"),
   coachTwin: () => call<Twin>("/coach/twin"),
   daily: () => call<DailyCandle>("/daily"),
   playDaily: (choice: DailyChoice) => call<DailyResult>("/daily", { method: "POST", body: JSON.stringify({ choice }) }),

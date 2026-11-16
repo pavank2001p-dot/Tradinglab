@@ -1,12 +1,13 @@
 "use client";
 
+import DnaCard from "@/components/prop/Dna";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import RulePanel, { phaseName, StatusPill } from "@/components/prop/RulePanel";
 import SignInPrompt from "@/components/SignInPrompt";
 import { toast } from "@/components/Toaster";
 import { Icon, PageHeader } from "@/components/ui";
-import { api, fmtUsd, type PropChallenge, type PropOverview, type PropPlan, type PropStartInput } from "@/lib/api";
+import { api, fmtUsd, type Dna, type PropChallenge, type PropOverview, type PropPlan, type PropStartInput } from "@/lib/api";
 import { useUser } from "@/lib/useUser";
 
 const short = (v: number) => (v >= 1000 ? `$${v / 1000}k` : `$${v}`);
@@ -178,6 +179,8 @@ export default function PropPage() {
   const [picking, setPicking] = useState(false);
   const [leaving, setLeaving] = useState(false);
 
+  const [dna, setDna] = useState<Dna | null>(null);
+  useEffect(() => { if (user) api.propDna().then(setDna, () => {}); }, [user]);
   const load = () => api.prop().then(setData, (e) => setError(e instanceof Error ? e.message : "Couldn't load your challenges"));
   useEffect(() => { if (user) load(); }, [user]);
 
@@ -253,6 +256,8 @@ export default function PropPage() {
           ))}
         </section>
       )}
+
+      {dna && <DnaCard d={dna} />}
 
       <History items={(data?.history ?? []).filter((h) => h.id !== cur?.id)} />
     </div>

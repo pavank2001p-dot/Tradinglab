@@ -75,6 +75,11 @@ api/   FastAPI + Postgres (Railway). Auth, price data, and later backtests, news
   there was none, and sizes to the limit. Twin stops are checked on minute bars (hourly where minutes aren't kept)
   up to the user's exit. The page shows both running results, the gap, and what each habit cost. Session glyphs
   draw each trading day of the last five weeks as an emblem: a ring per trade, jagged when a rule was broken.
+- **Trader DNA and rulebook remix** (`api/app/dna.py`, `/paper/prop`): once there are five closed paper trades, a
+  scouting report scores six habits from 0 to 100 (stops, sizing, consistency of risk, composure after losses,
+  payoff and care around big releases) and names the weakest. The remix replays the user's trading days against
+  each challenge plan's phase 1 rules in their real order, then 1,000 times as 60 days drawn at random from their
+  own, and shows pass odds, which limit breaks most, and a fan of sample paths. Only closed results are counted.
 - **Trade log** (`api/app/trades.py`): manual entry or CSV import (MetaTrader 4/5 and most broker exports; gold
   rows only; re-imports skip known tickets). Produces the same report as a backtest (`api/app/report.py`).
 
