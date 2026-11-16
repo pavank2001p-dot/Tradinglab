@@ -62,13 +62,13 @@ export default function HeroBoard() {
   if (picks.length < 2) return null;
   return (
     <div className="float-slow relative">
-      <div aria-hidden className="absolute -inset-px rounded-[1.35rem] bg-[conic-gradient(from_140deg,var(--gold),var(--violet),var(--calm),var(--up),var(--gold))] opacity-60 blur-[2px]" />
-      <div className="relative rounded-[1.3rem] border border-border bg-surface/95 p-3 shadow-2xl shadow-black/40 backdrop-blur">
-        <div className="flex items-center justify-between px-3 pb-2 pt-1.5">
-          <p className="flex items-center gap-2 text-xs font-medium text-muted">
-            <span className="breathe h-1.5 w-1.5 rounded-full bg-up" /> Markets, last {HOURS} hours
+      <div aria-hidden className="absolute -inset-6 rounded-[2.5rem] bg-[conic-gradient(from_140deg,var(--gold),var(--violet),var(--calm),var(--up),var(--gold))] opacity-25 blur-3xl" />
+      <div className="lux relative p-3.5">
+        <div className="flex items-center justify-between px-3 pb-3 pt-2">
+          <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.16em] text-muted">
+            <span className="breathe h-1.5 w-1.5 rounded-full bg-up" /> Markets · last {HOURS} hours
           </p>
-          <Link href="/chart" className="text-xs text-gold hover:underline">All {markets.length}</Link>
+          <Link href="/chart" className="text-xs font-medium text-gold hover:underline">All {markets.length}</Link>
         </div>
         <ul>{picks.map((m, i) => <Row key={m.symbol} m={m} delay={200 + i * 90} />)}</ul>
       </div>
