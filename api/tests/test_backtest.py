@@ -4,6 +4,7 @@ import pytest
 
 from app import backtest as bt
 from app import ingest
+from app import instruments as ins
 
 UTC = timezone.utc
 T0 = int(datetime(2024, 1, 8, 14, tzinfo=UTC).timestamp())  # a Monday afternoon
@@ -20,7 +21,7 @@ def bars_from(closes, step=3600, start=T0):
 
 def cfg(**kw):
     base = dict(strategy="ma_cross", params={"fast": 2, "slow": 5}, tf="1h", direction="long_only",
-                capital=10_000, units=1, spread=0.0, swap_long=0, swap_short=0)
+                capital=10_000, units=1, spread=0.0, swap_long=0, swap_short=0, slippage=0)
     base.update(kw)
     return bt.BacktestIn(**base)
 
@@ -148,7 +149,40 @@ def test_strategy_list_and_validation():
 
 def test_buy_and_hold_matches_the_market():
     bars = random_bars(200)
-    rep = bt.run(bt.BacktestIn(strategy="buy_and_hold", tf="1d", units=1, swap_long=0, spread=0), bars)
+    rep = bt.run(bt.BacktestIn(strategy="buy_and_hold", tf="1d", units=1, swap_long=0, spread=0, slippage=0), bars)
     t = rep["trades"][0]
     assert len(rep["trades"]) == 1 and t["entry_time"] == bars[1]["t"] and t["exit_reason"] == "end_of_test"
     assert t["pnl"] == pytest.approx(bars[-1]["c"] - bars[1]["o"], abs=0.01)
+
+
+def test_commission_and_slippage_are_charged_on_market_orders():
+    bars = bars_from([100] * 5 + [101, 102, 103, 104, 103, 101, 99, 98])
+    free = bt.run(cfg(), bars)["trades"][0]
+    t = bt.run(cfg(slippage=0.1, commission_per_unit=0.5, commission_min=0), bars)["trades"][0]
+    assert t["entry_price"] == round(free["entry_price"] + 0.1, 3) and t["exit_price"] == round(free["exit_price"] - 0.1, 3)
+    assert t["commission"] == 1.0  # 0.5 on the way in, 0.5 on the way out
+    assert t["pnl"] == round(free["pnl"] - 0.2 - 1.0, 2)
+    assert t["costs"] == round(0.2 + 1.0, 2)
+
+
+def test_minimum_commission_and_percent_commission():
+    assert ins.commission_for(10, 200, 0, 0.005, 1.0) == 1.0  # 10 shares at half a cent: the $1 minimum
+    assert ins.commission_for(1000, 200, 0, 0.005, 1.0) == 5.0
+    assert round(ins.commission_for(0.5, 90_000, 0.1, 0, 0), 2) == 45.0  # 0.1% of $45,000
+    assert ins.commission_for(5, 2000, 0, 0, 0) == 0.0
+
+
+def test_take_profit_is_a_limit_order_and_does_not_slip():
+    bars = bars_from([100] * 6 + [101, 103, 106, 110, 112])
+    t = bt.run(cfg(take_profit_pct=3, slippage=0.2), bars)["trades"][0]
+    assert t["exit_reason"] == "take_profit"
+    assert t["exit_price"] == round(t["entry_price"] * 1.03, 3)
+
+
+def test_market_defaults_fill_in_costs():
+    gold = bt.BacktestIn(strategy="ma_cross")
+    assert gold.commission_pct == 0 and gold.slippage == pytest.approx(ins.GOLD.spread * 0.25)
+    for m in ins.ALL:
+        assert m.cost("slippage_x") > 0 and m.market_slippage > 0
+        pub = m.public()
+        assert {"commission_pct", "commission_per_unit", "commission_min", "slippage"} <= pub.keys()

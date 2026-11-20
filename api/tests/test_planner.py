@@ -37,7 +37,7 @@ def daily_bars(years=3.5, seed=7):
 def test_size_pct_sizes_each_trade_from_the_account():
     closes = [100, 100, 110, 121, 121, 100, 100, 110, 121, 121]
     bars = [{"t": i * 86400, "o": c, "h": c, "l": c, "c": c} for i, c in enumerate(closes)]
-    cfg = bt.BacktestIn(strategy="buy_and_hold", tf="1d", capital=10_000, size_pct=200, spread=0, swap_long=0)
+    cfg = bt.BacktestIn(strategy="buy_and_hold", tf="1d", capital=10_000, size_pct=200, spread=0, swap_long=0, slippage=0)
     rep = bt.run(cfg, bars)
     t = rep["trades"][0]
     assert math.isclose(t["units"], 10_000 * 2 / 100)  # 2x the account at the first fill

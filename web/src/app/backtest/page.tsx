@@ -29,12 +29,18 @@ const DEFAULTS: Omit<BacktestParams, "strategy" | "params"> = {
   take_profit_pct: null,
   size_pct: null,
   realistic_fills: true,
+  commission_pct: null,
+  commission_per_unit: null,
+  commission_min: null,
+  slippage: null,
 };
 
 /** A market's usual trade size and broker costs. A swap charged as a yearly % of the position is left empty
  *  so the server applies it. */
 const costsFor = (m: Market) => ({
   symbol: m.symbol, units: m.default_units, spread: m.spread, swap_long: m.swap_long, swap_short: m.swap_short,
+  commission_pct: m.commission_pct ?? null, commission_per_unit: m.commission_per_unit ?? null,
+  commission_min: m.commission_min ?? null, slippage: m.slippage ?? null,
 });
 const unitName = (m: Market) => (m.unit === "ounce" ? "oz" : m.unit === "MMBtu" ? "MMBtu" : `${m.unit}s`);
 
@@ -278,6 +284,18 @@ export default function BacktestPage() {
           <summary className="cursor-pointer text-sm font-medium">Broker costs</summary>
           <div className="mt-3 grid grid-cols-2 gap-3">
             <Field label={`Spread ($ per ${market.unit})`}><Num value={form.spread} min={0} onChange={(v) => set({ spread: v ?? 0 })} /></Field>
+            <Field label={`Slippage ($ per ${market.unit})`} hint="Market orders and stops fill this far past the price">
+              <Num value={form.slippage} min={0} placeholder={market.slippage != null ? String(market.slippage) : "default"} onChange={(v) => set({ slippage: v })} />
+            </Field>
+            <Field label="Commission (% of value)" hint="Each side: on entry and on exit">
+              <Num value={form.commission_pct} min={0} placeholder={String(market.commission_pct ?? 0)} onChange={(v) => set({ commission_pct: v })} />
+            </Field>
+            <Field label={`Commission ($ per ${market.unit})`} hint="Each side">
+              <Num value={form.commission_per_unit} min={0} placeholder={String(market.commission_per_unit ?? 0)} onChange={(v) => set({ commission_per_unit: v })} />
+            </Field>
+            <Field label="Minimum commission ($ per order)">
+              <Num value={form.commission_min} min={0} placeholder={String(market.commission_min ?? 0)} onChange={(v) => set({ commission_min: v })} />
+            </Field>
             <div />
             <Field label={`Swap long ($/${market.unit}/night)`}><Num value={form.swap_long} placeholder={`${market.swap_long_pct}% a year`} onChange={(v) => set({ swap_long: v })} /></Field>
             <Field label={`Swap short ($/${market.unit}/night)`}><Num value={form.swap_short} placeholder={`${market.swap_short_pct}% a year`} onChange={(v) => set({ swap_short: v })} /></Field>
@@ -288,8 +306,9 @@ export default function BacktestPage() {
             <span>Realistic fills<span className="block text-xs text-muted">Wider spreads at the 5pm New York rollover (hourly candles) and around high-impact releases, and stops that slip past their price when a release lands inside their candle.</span></span>
           </label>
           <p className="mt-2 text-xs text-muted">
-            Defaults are rough estimates for {market.name}. An empty swap charges the yearly rate shown on the position&apos;s value.
-            Check your broker&apos;s spread and swap rates.
+            Defaults are rough estimates for {market.name} on a standard retail account. An empty swap charges the yearly rate
+            shown on the position&apos;s value, and an empty commission or slippage uses the market&apos;s default. Take profits are
+            limit orders and don&apos;t slip. Check your broker&apos;s spread, commission and swap rates.
           </p>
         </details>
 

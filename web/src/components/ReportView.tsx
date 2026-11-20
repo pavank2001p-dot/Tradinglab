@@ -113,7 +113,7 @@ export default function ReportView({ report, kind }: { report: Report; kind: "ba
       </div>
       <p className="text-xs text-muted">
         {s.trades} trades · average hold {s.avg_hold_hours != null ? `${s.avg_hold_hours.toFixed(1)} h` : "–"} · costs{" "}
-        {fmtUsd(s.total_costs)} · swap {fmtUsd(s.total_swap)}
+        {fmtUsd(s.total_costs)}{s.total_commission ? <> (commission {fmtUsd(s.total_commission)})</> : null} · swap {fmtUsd(s.total_swap)}
         {kind === "backtest" && s.time_in_market_pct != null && <> · in the market {fmtPct(s.time_in_market_pct)} of the time</>}
         {s.cagr_pct != null && <> · {fmtPct(s.cagr_pct)} a year</>}
         {kind === "backtest" && <> · longest losing streak {s.longest_losing_streak}</>}
