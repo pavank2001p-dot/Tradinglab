@@ -33,6 +33,31 @@ CLASSES = {
     "crypto": "Crypto",
 }
 
+# Trading costs on top of the spread, by asset class; a market can override any of them (see Instrument).
+# Commission is charged on every fill (each side): a % of the trade's value plus a fixed amount per unit,
+# with a minimum per order. Market orders (signal entries and exits, stops) also slip past the quote by
+# `slippage_x` times the market's spread; limit orders (take profits) don't slip. The defaults describe a
+# standard retail account: forex, metals, energy and index CFDs are spread-only, US shares pay a per-share
+# fee like a direct-access broker, and crypto pays an exchange's taker fee.
+COSTS: dict[str, dict[str, float]] = {
+    "metals": {"commission_pct": 0.0, "commission_per_unit": 0.0, "commission_min": 0.0, "slippage_x": 0.25},
+    "energy": {"commission_pct": 0.0, "commission_per_unit": 0.0, "commission_min": 0.0, "slippage_x": 0.5},
+    "agriculture": {"commission_pct": 0.0, "commission_per_unit": 0.0, "commission_min": 0.0, "slippage_x": 0.5},
+    "forex": {"commission_pct": 0.0, "commission_per_unit": 0.0, "commission_min": 0.0, "slippage_x": 0.25},
+    "indices": {"commission_pct": 0.0, "commission_per_unit": 0.0, "commission_min": 0.0, "slippage_x": 0.5},
+    "stocks": {"commission_pct": 0.0, "commission_per_unit": 0.005, "commission_min": 1.0, "slippage_x": 0.25},
+    "etfs": {"commission_pct": 0.0, "commission_per_unit": 0.005, "commission_min": 1.0, "slippage_x": 0.25},
+    "crypto": {"commission_pct": 0.1, "commission_per_unit": 0.0, "commission_min": 0.0, "slippage_x": 0.5},
+}
+# Used for any asset class without its own entry, so a new class works before it is tuned.
+DEFAULT_COSTS = {"commission_pct": 0.0, "commission_per_unit": 0.0, "commission_min": 0.0, "slippage_x": 0.25}
+
+
+def commission_for(units: float, price: float, pct: float, per_unit: float, minimum: float) -> float:
+    """Commission in USD for one fill (one side) of `units` at `price`."""
+    fee = abs(units) * per_unit + abs(units) * price * pct / 100
+    return max(fee, minimum) if fee > 0 or minimum > 0 else 0.0
+
 
 @dataclass(frozen=True)
 class Instrument:
@@ -57,10 +82,30 @@ class Instrument:
     day: str = "ny17"    # when a daily bar closes: 17:00 New York ("ny17") or midnight UTC ("utc")
     point: float = 1000.0  # Dukascopy stores prices as integers; divide by this
     tags: tuple[str, ...] = field(default_factory=tuple)
+    # Per-market overrides of the asset class's costs in COSTS (None = use the class's).
+    commission_pct: float | None = None       # % of the trade's value, per side
+    commission_per_unit: float | None = None  # USD per unit, per side
+    commission_min: float | None = None       # USD, the least one order costs
+    slippage: float | None = None             # price units a market order fills past the quote
 
     @property
     def class_label(self) -> str:
         return CLASSES[self.asset_class]
+
+    def cost(self, key: str) -> float:
+        """A trading cost from COSTS for this market, or its own override."""
+        own = getattr(self, key, None) if key != "slippage_x" else None
+        return own if own is not None else COSTS.get(self.asset_class, DEFAULT_COSTS)[key]
+
+    @property
+    def market_slippage(self) -> float:
+        """How far past the quote a market order fills, in price units."""
+        return self.slippage if self.slippage is not None else self.spread * self.cost("slippage_x")
+
+    def commission(self, units: float, price: float) -> float:
+        """Commission in USD for one fill (one side) at this market's default rates."""
+        return commission_for(units, price, self.cost("commission_pct"), self.cost("commission_per_unit"),
+                              self.cost("commission_min"))
 
     def swap_per_unit(self, side: str, price: float) -> float:
         """Financing per unit for one night held, at this price."""
@@ -124,6 +169,8 @@ class Instrument:
             "live": bool(self.live), "swap_long": self.swap_long, "swap_short": self.swap_short,
             "swap_long_pct": self.swap_long_pct, "swap_short_pct": self.swap_short_pct,
             "tick": self.tick, "tick_value": round(self.tick * self.lot, 6), "weekends": self.weekends,
+            "commission_pct": self.cost("commission_pct"), "commission_per_unit": self.cost("commission_per_unit"),
+            "commission_min": self.cost("commission_min"), "slippage": round(self.market_slippage, 8),
         }
 
 
