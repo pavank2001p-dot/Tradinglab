@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import FitPanel from "@/components/FitPanel";
 import ReportView from "@/components/ReportView";
+import TrustPanel from "@/components/TrustPanel";
 import ShareButton, { resultShare } from "@/components/ShareCard";
 import SignInPrompt from "@/components/SignInPrompt";
 import { Chips, Empty, Icon, PageHeader } from "@/components/ui";
@@ -297,7 +298,8 @@ export default function BacktestPage() {
           {busy ? "Running…" : "Run backtest"}
         </button>
         <p className="text-xs text-muted">
-          Signals use each candle&apos;s close and trade at the next candle&apos;s open. Past results don&apos;t predict future ones.
+          Signals use each candle&apos;s close and trade at the next candle&apos;s open. The last 30% of the period is
+          also reported on its own, as a check on prices the strategy wasn&apos;t tuned on. Past results don&apos;t predict future ones.
         </p>
       </form>
 
@@ -313,6 +315,7 @@ export default function BacktestPage() {
               )}
             </div>
             <div className="space-y-4">
+              {result.robustness && result.stats.trades > 0 && <TrustPanel robustness={result.robustness} split={result.split} />}
               <FitPanel load={() => api.backtestFit(result.id)} deps={[result.id]} />
               <ReportView report={result} kind="backtest" />
             </div>

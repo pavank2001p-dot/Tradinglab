@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, model_validator
 
-from . import db
+from . import db, robust
 from .auth import UserOut, current_user
 
 router = APIRouter(prefix="/custom-strategies", tags=["custom strategies"])
@@ -286,7 +286,7 @@ def preview(body: PreviewIn) -> dict:
     bars = bt.load_bars(cfg.tf, cfg.start, None, cfg.symbol)
     if len(bars) < 30:
         raise HTTPException(422, "Not enough price history for that period yet")
-    rep = bt.run(cfg, bars)
+    rep = bt.run(cfg, bars, checks=True)
     sig = bt.signals("custom", {}, bars, body.rules)
     return {
         "stats": rep["stats"],
@@ -296,6 +296,7 @@ def preview(body: PreviewIn) -> dict:
         "candles": [{k: b[k] for k in ("t", "o", "h", "l", "c")} for b in bars[-PREVIEW_BARS:]],
         "in_market_pct": round(sum(1 for x in sig if x) / len(sig) * 100, 1),
         "description": describe(body.rules),
+        "split": rep["split"], "robustness": rep["robustness"],
     }
 
 
@@ -318,6 +319,8 @@ def sweep(body: SweepIn) -> list[dict]:
         raise ValueError("That condition doesn't exist")
     start = date.today() - timedelta(days=round(body.years * 365.25))
     bars = bt.load_bars(body.tf, start, None)
+    # Tune only on the development part, so the held-back part stays a fair check of the tuned rules.
+    bars = bars[: robust.cut_index(len(bars), robust.DEFAULT_HOLDOUT_PCT)]
     if len(bars) < 30:
         raise ValueError("Not enough price history for that period yet")
     out = []
@@ -330,7 +333,7 @@ def sweep(body: SweepIn) -> list[dict]:
             out.append({"value": v, "ok": False})
             continue
         cfg = bt.BacktestIn(strategy="custom", rules=rules, tf=body.tf, start=start, capital=10_000, size_pct=100,
-                            stop_loss_pct=body.stop_loss_pct)
+                            stop_loss_pct=body.stop_loss_pct, holdout_pct=0)
         st = bt.run(cfg, bars)["stats"]
         out.append({"value": v, "ok": True, "return_pct": st["total_return_pct"], "max_drawdown_pct": st["max_drawdown_pct"],
                     "trades": st["trades"], "win_rate_pct": st["win_rate_pct"]})
