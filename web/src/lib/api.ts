@@ -106,6 +106,7 @@ export type CustomPreview = {
   stats: Report["stats"]; equity: Report["equity"]; trades: PreviewTrade[];
   candles: { t: number; o: number; h: number; l: number; c: number }[]; in_market_pct: number; description: string;
   symbol?: string;
+  split?: Split | null; robustness?: Robustness;
 };
 
 /** A saved custom strategy shown in the same list as the built-in ones. */
@@ -155,10 +156,27 @@ export type Stats = {
   slipped_stops?: number;
 };
 
+export type TrustCheck = { key: "trades" | "held_back" | "monte_carlo"; label: string; status: "pass" | "warn" | "fail"; detail: string };
+/** How far a backtest can be trusted to carry over to the real market (api/app/robust.py). */
+export type Robustness = {
+  level: "strong" | "fair" | "weak" | "thin";
+  label: string;
+  checks: TrustCheck[];
+  monte_carlo: {
+    paths: number; return_p5: number; return_p50: number; return_p95: number;
+    drawdown_p50: number; drawdown_p95: number; loss_chance_pct: number;
+  } | null;
+};
+type PartStats = Partial<Stats> & { trades: number; avg_trade_return_pct?: number | null };
+/** The test split at `cut`: the development part and the held-back part, each reported on its own. */
+export type Split = { cut: number; development: PartStats; held_back: PartStats };
+
 export type Report = {
   stats: Stats;
   equity: { t: number; equity: number; drawdown: number }[];
   trades: ReportTrade[];
+  split?: Split | null;
+  robustness?: Robustness;
 };
 
 export type BacktestParams = {
@@ -180,6 +198,8 @@ export type BacktestParams = {
   size_pct?: number | null;
   /** Wider spreads at the rollover and around big releases, and stops that slip around releases. */
   realistic_fills?: boolean;
+  /** The last part of the period, in %, reported on its own as data the strategy wasn't tuned on. */
+  holdout_pct?: number;
 };
 
 export type Backtest = Report & { id: number; created_at: string; params: BacktestParams; period?: { start: number; end: number } };

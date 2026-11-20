@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, model_validator
 
-from . import config, db, fills
+from . import config, db, fills, robust
 from . import instruments as ins
 from .auth import UserOut, current_user
 from .custom import Rules
@@ -778,6 +778,8 @@ class BacktestIn(BaseModel):
     swap_short: float | None = Field(None, ge=-10_000, le=10_000, description="USD per unit per night held short")
     stop_loss_pct: float | None = Field(None, gt=0, le=50)
     take_profit_pct: float | None = Field(None, gt=0, le=200)
+    holdout_pct: float = Field(robust.DEFAULT_HOLDOUT_PCT, ge=0, le=50, description=(
+        "The last part of the period, in %, reported on its own as data the strategy wasn't tuned on (0 = none)"))
     realistic_fills: bool = Field(True, description=(
         "Wider spreads at the rollover and around high-impact releases, and stops that slip past their price "
         "around releases (see app/fills.py). On by default, like the paper account, so a test is never kinder "
@@ -848,11 +850,13 @@ def conditions_for(bars: list[dict]) -> "fills.Conditions":
         return fills.Conditions()
 
 
-def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = None) -> dict:
+def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = None, checks: bool = False) -> dict:
     """Run a test. `cond` (release times) makes fills realistic: on hourly bars the spread at each bar's
     open follows the rollover and releases, and on any bar a stop slips when a release falls inside it.
     When `cond` isn't given it is loaded here if cfg.realistic_fills is on, so every caller (the backtest
-    page, the strategy builder's preview and sweep, the agent) tests with the same costs."""
+    page, the strategy builder's preview and sweep, the agent) tests with the same costs.
+    `checks` adds the held-back split and the trust checks (app/robust.py) for a result a person will read;
+    tools that run many tests and only compare stats leave it off."""
     if len(bars) < 2:
         raise ValueError("Not enough price data in that date range")
     if cond is None and cfg.realistic_fills:
@@ -978,6 +982,11 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     if cond is not None and cond.on:
         rep["stats"]["slipped_stops"] = slipped
     rep["period"] = {"start": bars[0]["t"], "end": bars[-1]["t"]}
+    if not checks:
+        return rep
+    cut = robust.cut_index(len(bars), cfg.holdout_pct)
+    rep["split"] = robust.split(trades, equity, cfg.capital, bars[cut]["t"]) if cut < len(bars) else None
+    rep["robustness"] = robust.assess(trades, cfg.capital, rep["split"])
     return rep
 
 
@@ -1006,7 +1015,7 @@ def strategies():
 def create(cfg: BacktestIn, user: UserOut = Depends(current_user)):
     try:
         bars = load_bars(cfg.tf, cfg.start, cfg.end, cfg.symbol)
-        rep = run(cfg, bars)
+        rep = run(cfg, bars, checks=True)
     except ValueError as e:
         raise HTTPException(422, str(e))
     params = cfg.model_dump(mode="json")
