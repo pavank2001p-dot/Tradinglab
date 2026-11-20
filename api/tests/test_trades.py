@@ -14,11 +14,14 @@ def signup(client, email="t@example.com"):
 
 def test_parse_mt4_history():
     trades, skipped = parse_csv(MT4)
-    assert [tk for tk, _ in trades] == ["1001", "1002"]
+    assert [tk for tk, _ in trades] == ["1001", "1002", "1003"]
     a, b = trades[0][1], trades[1][1]
     assert (a.side, a.units, a.open_price, a.close_price, a.stop_loss, a.fees) == ("long", 10, 2050, 2060, 2040, 0.7)
     assert (b.side, b.units, b.swap, b.stop_loss) == ("short", 20, -2.1, None)
-    assert len(skipped) == 2 and "not gold" in skipped[0]
+    # Other markets come in too: one lot of EUR/USD is 100,000 euros.
+    c = trades[2][1]
+    assert (c.symbol, c.units) == ("EURUSD", 100_000)
+    assert len(skipped) == 1
 
 
 def test_parse_simple_spreadsheet_with_ounces():
@@ -63,9 +66,9 @@ def test_import_skips_duplicates_and_is_private(client):
     signup(client)
     files = {"file": ("history.csv", MT4.encode(), "text/csv")}
     r = client.post("/trades/import", files=files).json()
-    assert (r["imported"], r["duplicates"], r["skipped_count"]) == (2, 0, 2)
+    assert (r["imported"], r["duplicates"], r["skipped_count"]) == (3, 0, 1)
     r = client.post("/trades/import", files=files).json()
-    assert (r["imported"], r["duplicates"]) == (0, 2)
+    assert (r["imported"], r["duplicates"]) == (0, 3)
 
     client.cookies.clear()
     signup(client, "other@example.com")

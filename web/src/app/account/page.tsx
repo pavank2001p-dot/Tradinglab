@@ -11,11 +11,11 @@ import { useUser } from "@/lib/useUser";
 
 const next = [
   { title: "Take the risk-profile quiz", when: "17 questions to set your risk limits", href: "/risk", icon: "risk" },
-  { title: "Backtest a strategy", when: "Try 23 strategies, or your own, on 20+ years of gold", href: "/backtest", icon: "backtest" },
-  { title: "Explore a trade's scenarios", when: "2,000 simulated paths from gold's own history", href: "/scenarios", icon: "scenarios" },
-  { title: "Practise with paper trading", when: "Virtual money, real gold prices", href: "/paper", icon: "wallet" },
+  { title: "Backtest a strategy", when: "Try 23 strategies, or your own, on any market's history", href: "/backtest", icon: "backtest" },
+  { title: "Explore a trade's scenarios", when: "2,000 simulated paths from the market's own history", href: "/scenarios", icon: "scenarios" },
+  { title: "Practise with paper trading", when: "Virtual money, real prices on 150 markets", href: "/paper", icon: "wallet" },
   { title: "Log your own trades", when: "Type them in or import your broker history", href: "/trades", icon: "trades" },
-  { title: "Read the news", when: "Headlines tagged good or bad for gold", href: "/news", icon: "news" },
+  { title: "Read the news", when: "Headlines by market and sector, tagged good or bad", href: "/news", icon: "news" },
   { title: "Ask the assistant", when: "Plain-language answers about your results", href: "/assistant", icon: "assistant" },
 ];
 

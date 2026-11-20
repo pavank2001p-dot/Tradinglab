@@ -1,4 +1,4 @@
-"""AI assistant: answers questions about gold, the other markets in app.instruments and the user's own results with Claude.
+"""AI assistant: answers questions about every market in app.instruments and the user's own results with Claude.
 
 Every number in an answer must come from a tool that reads the site's data (prices, backtests,
 the trade log, news, the calendar), never from the model's memory. Answers run in the background;
@@ -28,12 +28,28 @@ MAX_TURNS = 12  # model calls per question; building a strategy takes a few test
 MAX_SECONDS = 150
 MAX_HISTORY = 10
 
-SYMBOL_PROP = {"type": "string", "description": "Market symbol, such as EURUSD, USA500IDXUSD, BTCUSD or AAPLUSUSD; default XAUUSD (gold)"}
+SYMBOL_PROP = {"type": "string", "description": "Market symbol, such as EURUSD, USA500IDXUSD, BTCUSD or AAPLUSUSD; "
+               "default: the market the user is looking at"}
 
-SYSTEM = """You are the Trading Lab assistant, built into an educational trading website. You focus on gold (XAU/USD) by default, and every price, backtest and strategy tool also works on the site's other markets: pass their symbol (""" + ", ".join(f"{i.symbol} = {i.name}" for i in ins.ENABLED) + """). Use the market the user names; otherwise gold.
+
+def _catalog() -> str:
+    """Every market by asset class, compactly: "Forex: EURUSD = Euro / US dollar, ..."."""
+    lines = []
+    for key, label in ins.CLASSES.items():
+        ms = [i for i in ins.ENABLED if i.asset_class == key]
+        if ms:
+            lines.append(f"{label}: " + ", ".join(f"{i.symbol} = {i.name}" for i in ms))
+    return "\n".join(lines)
+
+
+SYSTEM = """You are the Trading Lab assistant, built into an educational trading website that covers commodities, forex, stock indices, stocks across every sector, ETFs and crypto. Every price, backtest, strategy and news tool works on any of these markets: pass its symbol.
+
+""" + _catalog() + """
+
+Use the market the user names. If they don't name one, use the market they are looking at (given at the start of the conversation when known); otherwise ask which market they mean, or answer in general terms.
 
 What you do
-- Explain gold prices, strategies, backtests, risk and news in plain English for people who may be new to trading.
+- Explain prices, strategies, backtests, risk and news for any market in plain English for people who may be new to trading.
 - Help users understand their own backtests, trade log, paper trading account and risk profile.
 
 Rules you always follow
@@ -43,7 +59,7 @@ Rules you always follow
 - If price_summary says the data source is "sample", tell the user the prices are demo data, not real market prices.
 - When suggesting a trade size, base it on the user's risk profile limits and the profile_fit tool, and present it as what would have stayed within their own limits.
 - When asked what went wrong with a strategy or how to handle a situation, use diagnose_strategy or my_agent. Explain the findings with their dates and the kind of market at the time, and present fixes only as changes that were tested on past prices with the results the tool gave, including whether they held up on the last 30%. Say that a fix that helped in the past may not help in future.
-- Keep answers short: a few sentences or a short list. Use the user's currency (USD) and say "ounces" for size.
+- Keep answers short: a few sentences or a short list. The account is in US dollars; give sizes in the market's own unit (ounces, shares, contracts, units, coins).
 - When asked to build, design or invent a strategy, write it yourself as rules with test_rules, which tests it on past prices without saving it. You may adjust and re-test a few times (at most about four versions), judging each version on the earlier 70% of the period and then checking it held up on the last 30%; don't tune to the last 30%. Then save the version you'll describe with save_strategy and give the link it returns as a markdown link, e.g. [Open it in the builder](/strategies/builder?id=12). Describe the rules in plain words, show the test results (including the last 30% and buy and hold), and say if it did worse than simply holding the market. Build with what the rules can express; if the idea needs something else (volume, news, other markets, time of day), say what you left out. Update an existing saved strategy only when the user asks for that one to be changed.
 - If asked about something unrelated to markets or this site, say briefly that you can only help with those topics."""
 
@@ -82,13 +98,13 @@ Indicators (ind):
 TOOLS = [
     {
         "name": "price_summary",
-        "description": "Latest XAU/USD price, 24-hour change, returns over 1 week, 1 month, 3 months, 1 year and "
+        "description": "Latest price of a market, 24-hour change, returns over 1 week, 1 month, 3 months, 1 year and "
         "year to date, the 52-week high and low, average daily range, and where the data comes from.",
         "input_schema": _obj({"symbol": SYMBOL_PROP}),
     },
     {
         "name": "price_history",
-        "description": "Prices of a market (gold by default) between two dates: open, close, high, low, return, and up to 60 "
+        "description": "Prices of a market between two dates: open, close, high, low, return, and up to 60 "
         "evenly spaced daily closes. Gold's daily data starts in 2003 (for earlier dates, back to 1833, it returns monthly "
         "prices instead); other markets start around 2015.",
         "input_schema": _obj({
@@ -109,7 +125,7 @@ TOOLS = [
     },
     {
         "name": "run_backtest",
-        "description": "Run a backtest on stored prices of a market (gold by default) and return its statistics (not saved). Fills at the "
+        "description": "Run a backtest on stored prices of a market and return its statistics (not saved). Fills at the "
         "next bar's open and charges spread and overnight swap. Settings not given use the defaults.",
         "input_schema": _obj({
             "strategy": {"type": "string", "enum": list(backtest.STRATEGIES)},
@@ -136,7 +152,7 @@ TOOLS = [
     },
     {
         "name": "my_trade_log",
-        "description": "Statistics for the user's own logged gold trades and the 20 most recent closed trades.",
+        "description": "Statistics for the user's own logged trades and the 20 most recent closed trades.",
         "input_schema": _obj({"capital": {"type": "number", "description": "Account size in USD; default 10000"}}),
     },
     {
@@ -160,10 +176,15 @@ TOOLS = [
         }),
     },
     {
-        "name": "gold_news",
-        "description": "Recent news headlines that mention gold or its drivers, each tagged bullish, bearish or "
-        "neutral for gold with a one-line reason.",
-        "input_schema": _obj({"limit": {"type": "integer", "description": "Up to 30; default 10"}}),
+        "name": "market_news",
+        "description": "Recent news headlines about a market, its sector, or the economy, each tagged bullish, bearish "
+        "or neutral for the market it is mainly about (its focus) with a one-line reason.",
+        "input_schema": _obj({
+            "symbol": {"type": "string", "description": "Headlines about this market or its sector; omit for all"},
+            "sector": {"type": "string", "description": 'An asset class such as "energy" or "crypto", a stock sector '
+                       'such as "stocks:Financials" or "stocks:Technology", or "macro" for the economy'},
+            "limit": {"type": "integer", "description": "Up to 30; default 10"},
+        }),
     },
     {
         "name": "my_agent",
@@ -193,7 +214,7 @@ TOOLS = [
     },
     {
         "name": "test_rules",
-        "description": "Test a strategy you write yourself as rules, on past prices of a market (gold by default), without saving it. Returns the "
+        "description": "Test a strategy you write yourself as rules, on past prices of a market, without saving it. Returns the "
         "rules in plain words and results for the whole period, the earlier 70% and the last 30% alone (unseen when "
         "judging the earlier part), with buy and hold over the same days. Each trade uses the whole account (no "
         "leverage) unless size_pct is set.\n\n" + RULES_HELP,
@@ -220,15 +241,16 @@ TOOLS = [
     },
     {
         "name": "economic_calendar",
-        "description": "Upcoming US economic events that often move gold (Fed meetings, inflation, jobs), with "
-        "why each matters.",
-        "input_schema": _obj({"days": {"type": "integer", "description": "Days ahead, up to 30; default 14"}}),
+        "description": "Upcoming economic releases (central bank decisions, inflation, jobs, growth) for the US and other "
+        "big economies, with why each matters. With a symbol, only the economies that move that market.",
+        "input_schema": _obj({"days": {"type": "integer", "description": "Days ahead, up to 30; default 14"},
+                              "symbol": {"type": "string", "description": "Only releases that move this market"}}),
     },
 ]
 
 
 def _sym(i: dict) -> str:
-    """The market a tool call names, or gold. An unknown symbol is an error the model can read and correct."""
+    """The market a tool call names (gold when none is given). An unknown symbol is an error the model can read and correct."""
     try:
         return ins.get(i.get("symbol")).symbol
     except KeyError:
@@ -421,18 +443,20 @@ def t_profile_fit(i: dict, user_id: int) -> dict:
         return {"error": e.detail}
 
 
-def t_gold_news(i: dict, user_id: int) -> dict:
-    feed = news.list_(limit=min(int(i.get("limit") or 10), 30), gold_only=False)
+def t_market_news(i: dict, user_id: int) -> dict:
+    sym = _sym(i) if i.get("symbol") else None
+    feed = news.list_(limit=min(int(i.get("limit") or 10), 30), symbol=sym, sector=i.get("sector") or None)
     if not feed["items"]:
-        return {"error": "No news is loaded yet."}
+        return {"error": "No matching news is loaded yet."}
     return {"items": [{"published": r["published_at"].isoformat(timespec="minutes"), "headline": r["headline"],
-                       "publisher": r["publisher"], "impact_on_gold": r["impact"], "reason": r["reason"]}
+                       "publisher": r["publisher"], "markets": r["symbols"][:5], "sectors": r["sectors"][:5],
+                       "tagged_for": r["focus"], "impact": r["impact"], "reason": r["reason"]}
                       for r in feed["items"]]}
 
 
 def t_economic_calendar(i: dict, user_id: int) -> list:
-    rows = calendar.list_(days=min(int(i.get("days") or 14), 30), past_days=0)
-    return [{"time_utc": r["ts"].isoformat(timespec="minutes"), "event": r["title"], "impact": r["impact"],
+    rows = calendar.list_(days=min(int(i.get("days") or 14), 30), past_days=0, symbol=_sym(i) if i.get("symbol") else None)
+    return [{"time_utc": r["ts"].isoformat(timespec="minutes"), "country": r["country"], "event": r["title"], "impact": r["impact"],
              "forecast": r["forecast"], "previous": r["previous"], "why_it_matters": r["why"]} for r in rows]
 
 
@@ -516,7 +540,7 @@ HANDLERS = {
     "my_paper_account": t_my_paper_account,
     "my_risk_profile": t_my_risk_profile,
     "profile_fit": t_profile_fit,
-    "gold_news": t_gold_news,
+    "market_news": t_market_news,
     "economic_calendar": t_economic_calendar,
 }
 
@@ -560,7 +584,7 @@ def answer(client: anthropic.Anthropic, user_id: int, question: str, history: li
             fallbacks="default",
         )
         if resp.stop_reason == "refusal":
-            return "Sorry, I can't help with that one. I can answer questions about gold, strategies and your results.", used
+            return "Sorry, I can't help with that one. I can answer questions about markets, strategies and your results.", used
         calls = [b for b in resp.content if b.type == "tool_use"]
         if resp.stop_reason != "tool_use" or not calls:
             text = "\n\n".join(b.text for b in resp.content if b.type == "text").strip()
@@ -607,11 +631,15 @@ def failure_text(e: Exception) -> str:
 
 def process(qid: int) -> None:
     with db.conn() as c:
-        row = c.execute("SELECT user_id, question, history FROM assistant_questions WHERE id = %s", (qid,)).fetchone()
+        row = c.execute("SELECT user_id, question, history, symbol FROM assistant_questions WHERE id = %s", (qid,)).fetchone()
     status, text, used = "error", f"Something went wrong answering that. {NOT_COUNTED}", []
     try:
         client = anthropic.Anthropic(api_key=config.ANTHROPIC_API_KEY, max_retries=3)
-        text, used = answer(client, row["user_id"], row["question"], row["history"])
+        question = row["question"]
+        m = ins.BY_SYMBOL.get(row.get("symbol") or "")
+        if m and not row["history"]:
+            question = f"(I'm looking at {m.name}, symbol {m.symbol}.)\n\n{question}"
+        text, used = answer(client, row["user_id"], question, row["history"])
         status = "done"
     except anthropic.APIError as e:
         log.error("assistant request failed (question %s): %r", qid, e)
@@ -639,6 +667,7 @@ class Turn(BaseModel):
 class AskIn(BaseModel):
     question: str = Field(min_length=1, max_length=2000)
     history: list[Turn] = Field(default=[], max_length=MAX_HISTORY)
+    symbol: str | None = Field(None, max_length=32, description="The market the user is looking at")
 
     @model_validator(mode="after")
     def _check(self):
@@ -685,8 +714,9 @@ def ask(body: AskIn, tasks: BackgroundTasks, user: UserOut = Depends(current_use
         if c.execute("SELECT 1 FROM assistant_questions WHERE user_id = %s AND status = 'pending'", (user.id,)).fetchone():
             raise HTTPException(409, "Please wait for the current answer first")
         row = c.execute(
-            "INSERT INTO assistant_questions (user_id, question, history) VALUES (%s, %s, %s) RETURNING id",
-            (user.id, body.question.strip(), Jsonb([t.model_dump() for t in body.history])),
+            "INSERT INTO assistant_questions (user_id, question, history, symbol) VALUES (%s, %s, %s, %s) RETURNING id",
+            (user.id, body.question.strip(), Jsonb([t.model_dump() for t in body.history]),
+             body.symbol.upper() if body.symbol and body.symbol.upper() in ins.BY_SYMBOL else None),
         ).fetchone()
     tasks.add_task(process, row["id"])
     return {"id": row["id"], "status": "pending"}

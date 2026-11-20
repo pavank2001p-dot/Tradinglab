@@ -1,9 +1,10 @@
-import type { ReplayBar, ReplaySettled, ReplayTradeIn } from "./api";
+import type { Market, ReplayBar, ReplaySettled, ReplayTradeIn } from "./api";
+import { toUsd } from "./markets";
 
 /** Where a replay trade ends. Mirrors the server's settle(), so the score on screen is the score it records:
  *  entries and manual exits fill at a bar's close; a later bar touching the stop or target closes it there
  *  (at the bar's open when it gapped through), the stop first when both are touched. */
-export function settle(bars: ReplayBar[], t: ReplayTradeIn): ReplaySettled {
+export function settle(bars: ReplayBar[], t: ReplayTradeIn, m?: Pick<Market, "quote" | "base_usd" | "usd_rate">): ReplaySettled {
   const entry = bars[t.entry_bar].c;
   const long = t.side === "long";
   let exit = bars[t.exit_bar].c, exitBar = t.exit_bar, reason: ReplaySettled["reason"] = "closed";
@@ -20,7 +21,8 @@ export function settle(bars: ReplayBar[], t: ReplayTradeIn): ReplaySettled {
       break;
     }
   }
-  const pnl = (exit - entry) * t.units * (long ? 1 : -1);
+  // In US dollars: a market quoted in another currency is converted, like the server does.
+  const pnl = (exit - entry) * t.units * (long ? 1 : -1) * (m ? toUsd(m, exit) : 1);
   return { ...t, entry_price: entry, exit_price: exit, exit_bar: exitBar, reason, pnl: Math.round(pnl * 100) / 100 };
 }
 

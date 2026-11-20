@@ -10,7 +10,7 @@ export const authButton = "btn-gold w-full rounded-full py-3 font-semibold disab
 const POINTS = [
   { icon: "risk", title: "Know your limits first", body: "A short risk profile sets how much you're comfortable losing, and every tool checks against it." },
   { icon: "backtest", title: "Test before you trust", body: "Run an idea on years of real prices, with real costs, before a single practice trade." },
-  { icon: "wallet", title: "Practise with nothing at stake", body: "Gold, forex, stocks, indices, energy and crypto, all with virtual money." },
+  { icon: "wallet", title: "Practise with nothing at stake", body: "Commodities, forex, indices, stocks in every sector, ETFs and crypto, all with virtual money." },
 ];
 
 /** The last word or two of a title are set in the display serif, as on the home page. */

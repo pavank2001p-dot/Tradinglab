@@ -43,12 +43,13 @@ def assess(trades: list[dict], stats: dict, capital: float, profile: str, stop_l
         if eq <= 0:
             continue
         price, units = t["entry_price"], t["units"]
-        leverage.append(units * price / eq)
+        fx = ins.known(t.get("symbol") or symbol).usd(price)  # dollars per unit of the market's quote currency
+        leverage.append(units * price * fx / eq)
         loss_pct.append(max(-t["pnl"], 0) / eq * 100)
         if stop_loss_pct:
-            planned.append(units * price * stop_loss_pct / 100 / eq * 100)
+            planned.append(units * price * fx * stop_loss_pct / 100 / eq * 100)
         elif t.get("stop_loss"):
-            planned.append(units * abs(price - t["stop_loss"]) / eq * 100)
+            planned.append(units * abs(price - t["stop_loss"]) * fx / eq * 100)
         else:
             unprotected += 1
 

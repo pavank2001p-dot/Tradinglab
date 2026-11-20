@@ -36,7 +36,7 @@ export default function Footer() {
           ))}
         </div>
         <div className="mt-12 border-t border-border pt-6 text-xs leading-relaxed text-muted">
-          {t("Trading Lab is an educational analysis tool. Nothing on this site is investment advice or a recommendation to buy or sell. Trading gold and other leveraged products carries a high risk of loss. Past performance and backtests do not guarantee future results. AI answers can be wrong.")}{" "}
+          {t("Trading Lab is an educational analysis tool. Nothing on this site is investment advice or a recommendation to buy or sell. Trading leveraged products such as CFDs, forex and crypto carries a high risk of loss. Past performance and backtests do not guarantee future results. AI answers can be wrong.")}{" "}
           <Link href="/disclaimer" className="underline hover:text-foreground">{t("Read the full disclaimer")}</Link>.
           <p className="mt-2">
             Charts by{" "}

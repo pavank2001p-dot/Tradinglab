@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { IChartApi, ISeriesApi } from "lightweight-charts";
 import { fmtUsd, type Market, type PaperOrder, type PaperOrderInput, type PaperPosition, type PaperPrice } from "@/lib/api";
-import { GOLD, fmtMarketPrice } from "@/lib/markets";
+import { GOLD, fmtMarketPrice, toUsd } from "@/lib/markets";
 
 type Side = "long" | "short";
 type Role = "entry" | "sl" | "tp";
@@ -34,7 +34,8 @@ const COLOR: Record<Role, string> = { entry: "var(--calm)", sl: "var(--down)", t
 const roundTo = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
 const dirOf = (s: Side) => (s === "long" ? 1 : -1);
 /** Profit or loss if the price reaches `at`, before spread and swap. */
-const pnlAt = (side: Side, entry: number, at: number, units: number) => (at - entry) * units * dirOf(side);
+const pnlAt = (side: Side, entry: number, at: number, units: number, m?: Market) =>
+  (at - entry) * units * dirOf(side) * (m ? toUsd(m, at) : 1);
 const pct = (v: number) => `${Math.abs(v) < 0.1 ? Math.abs(v).toFixed(2) : Math.abs(v).toFixed(1)}%`;
 const signedUsd = (v: number) => `${v > 0 ? "+" : v < 0 ? "−" : ""}${fmtUsd(Math.abs(v))}`;
 
@@ -348,8 +349,8 @@ export default function TradeLines({ chart, series, below, positions, orders, pr
   const units = draft ? Number(draft.units) || 0 : 0;
   const draftKind = draft ? (draft.market ? "market" : kindAt(draft.side, draft.price, price)) : null;
   const dDir = draft ? dirOf(draft.side) : 1;
-  const risk = draft?.sl != null ? -pnlAt(draft.side, draftEntry, draft.sl, units) : null;
-  const reward = draft?.tp != null ? pnlAt(draft.side, draftEntry, draft.tp, units) : null;
+  const risk = draft?.sl != null ? -pnlAt(draft.side, draftEntry, draft.sl, units, market) : null;
+  const reward = draft?.tp != null ? pnlAt(draft.side, draftEntry, draft.tp, units, market) : null;
   const riskPct = risk != null && equity > 0 ? (risk / equity) * 100 : null;
   let problem: string | null = null;
   if (draft) {
@@ -422,7 +423,7 @@ export default function TradeLines({ chart, series, below, positions, orders, pr
         </>
       );
     }
-    const v = pnlAt(l.side, entry, at, l.units);
+    const v = pnlAt(l.side, entry, at, l.units, market);
     const riskV = own.find((x) => x.role === "sl");
     const rr = l.role === "tp" && riskV ? Math.abs(at - entry) / Math.abs(entry - shown(riskV) || 1) : null;
     return (

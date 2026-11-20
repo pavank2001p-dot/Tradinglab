@@ -103,7 +103,7 @@ export default function ReportView({ report, kind }: { report: Report; kind: "ba
           <Stat icon="bolt" label="Sharpe ratio" value={s.sharpe?.toFixed(2) ?? "–"}
                 hint="Return per unit of daily volatility, annualised. Above 1 is good." />
           {kind === "backtest" ? (
-            <Stat icon="layers" label="Buy and hold" num={s.buy_and_hold_pct} fmt={(v) => fmtPct(v)} tone={tone(s.buy_and_hold_pct)} hint="Gold's own move over the same period" />
+            <Stat icon="layers" label="Buy and hold" num={s.buy_and_hold_pct} fmt={(v) => fmtPct(v)} tone={tone(s.buy_and_hold_pct)} hint="The market's own move over the same period" />
           ) : (
             <Stat icon="drop" label="Longest losing streak" value={`${s.longest_losing_streak} trades`} />
           )}

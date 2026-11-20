@@ -18,7 +18,7 @@ export default function ChartView() {
         right={<MarketPicker market={market} markets={markets} onChange={setSymbol} />} />
       <PriceTicker market={market} />
       <PriceChart height={620} tools market={market} />
-      {gold && <SignedInAlerts />}
+      <SignedInAlerts market={market} />
       <p className="text-xs text-muted">
         {gold ? (
           <>

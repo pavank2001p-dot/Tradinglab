@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS trades (
 CREATE INDEX IF NOT EXISTS trades_user_idx ON trades (user_id, open_time DESC);
 CREATE UNIQUE INDEX IF NOT EXISTS trades_external_idx ON trades (user_id, external_id) WHERE external_id IS NOT NULL;
 
--- Gold-relevant headlines, tagged by Claude with their likely effect on gold.
+-- Market headlines, tagged by Claude with their likely effect on the market they are mainly about (focus).
 CREATE TABLE IF NOT EXISTS news (
     id           BIGSERIAL PRIMARY KEY,
     source       TEXT NOT NULL,
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS news (
     url          TEXT NOT NULL DEFAULT '',
     publisher    TEXT NOT NULL DEFAULT '',
     published_at TIMESTAMPTZ NOT NULL,
-    relevance    SMALLINT NOT NULL DEFAULT 1,  -- 2 = mentions gold directly, 1 = macro driver
+    relevance    SMALLINT NOT NULL DEFAULT 1,  -- 2 = about a market or sector, 1 = macro driver
     impact       TEXT CHECK (impact IN ('bullish', 'bearish', 'neutral')),
     reason       TEXT,
     tagged_at    TIMESTAMPTZ,
@@ -426,3 +426,12 @@ ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS planned_stop DOUBLE PRECISI
 ALTER TABLE replay_sessions ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'XAUUSD';
 ALTER TABLE challenges ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'XAUUSD';
 ALTER TABLE price_alerts ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'XAUUSD';
+
+-- News for every market (app/news.py): which markets and sectors a headline is about, and the market its tag is for.
+ALTER TABLE news ADD COLUMN IF NOT EXISTS symbols TEXT[];
+ALTER TABLE news ADD COLUMN IF NOT EXISTS sectors TEXT[];
+ALTER TABLE news ADD COLUMN IF NOT EXISTS focus TEXT;
+CREATE INDEX IF NOT EXISTS news_symbols_idx ON news USING gin (symbols);
+CREATE INDEX IF NOT EXISTS news_sectors_idx ON news USING gin (sectors);
+ALTER TABLE assistant_questions ADD COLUMN IF NOT EXISTS symbol TEXT;
+ALTER TABLE trades ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'XAUUSD';

@@ -1,6 +1,7 @@
 """Paper trading: a practice account in virtual dollars, filled against real market prices.
 
-One account trades every market in app.instruments (all priced in US dollars). Each market has its
+One account, kept in US dollars, trades every market in app.instruments; profit and loss in a market
+quoted in another currency is converted at Instrument.usd. Each market has its
 own spread, overnight financing, trading hours and leverage cap: a position's margin is its value
 divided by the lower of the account's leverage and the market's cap, like a broker's per-class limits.
 
@@ -66,8 +67,7 @@ def _inst(symbol: str | None) -> ins.Instrument:
 
 def _of(row: dict) -> ins.Instrument:
     """The market of a stored position or order (a market later switched off falls back to its rules if known)."""
-    sym = row.get("symbol") or GOLD.symbol
-    return ins.BY_SYMBOL.get(sym) or next((i for i in ins.ALL if i.symbol == sym), GOLD)
+    return ins.known(row.get("symbol"))
 
 
 # ---------------------------------------------------------------------------
@@ -97,7 +97,7 @@ def current_price(symbol: str = GOLD.symbol, realistic: bool = True) -> dict | N
     age = max(time.time() - t, 0)
     # Feeds simply stop when forex-hours markets close, so a fresh price is enough there. US stocks
     # keep their last bar for hours after the 16:00 close, so their session times are checked too.
-    in_hours = inst.hours != "us_stock" or inst.is_open(datetime.now(timezone.utc))
+    in_hours = not inst.session_hours or inst.is_open(datetime.now(timezone.utc))
     now = datetime.now(timezone.utc)
     cond = fills.now() if realistic else fills.Conditions(on=False)
     spread = cond.spread(inst, now)
@@ -143,15 +143,21 @@ def _exit_price(side: str, bid: float, inst: ins.Instrument = GOLD) -> float:
 
 
 def _gross(p: dict, exit_price: float) -> float:
+    """Profit or loss in US dollars before financing."""
     sign = 1 if p["side"] == "long" else -1
-    return (exit_price - p["entry_price"]) * p["units"] * sign
+    return (exit_price - p["entry_price"]) * p["units"] * sign * _of(p).usd(exit_price)
+
+
+def value_usd(inst: ins.Instrument, units: float, price: float) -> float:
+    """What a position is worth in US dollars."""
+    return units * price * inst.usd(price)
 
 
 def _mark(p: dict, bid: float, now: datetime, rate: float) -> dict:
     exit_ = _exit_price(p["side"], bid, _of(p))
     swap = _swap(p, now)
     return {"mark": exit_, "swap": swap, "pnl": _gross(p, exit_) + swap,
-            "margin": p["units"] * bid * rate}
+            "margin": value_usd(_of(p), p["units"], bid) * rate}
 
 
 class _Book:
@@ -271,7 +277,7 @@ class _Book:
             else:
                 continue
             eq, used = self.equity(at=at)
-            if used + o["units"] * fill * self.rate_for(inst) > eq:
+            if used + value_usd(inst, o["units"], fill) * self.rate_for(inst) > eq:
                 self.finish_order(o, "cancelled", at, "Not enough free margin when the price was reached")
                 continue
             self.finish_order(o, "filled", at)
@@ -561,7 +567,7 @@ def place(o: OrderIn, user: UserOut = Depends(current_user)):
             _check_protection(o.side, fill, o.stop_loss, o.take_profit)
             now = datetime.now(timezone.utc)
             eq, used = book.equity(bid, now, inst.symbol)
-            need = o.units * bid * book.rate_for(inst)
+            need = value_usd(inst, o.units, bid) * book.rate_for(inst)
             if used + need > eq:
                 cap = (f" {inst.name} is capped at 1:{inst.max_leverage}."
                        if inst.max_leverage < acct["leverage"] else "")
@@ -775,7 +781,7 @@ def paper_report(user_id: int) -> dict:
             "id": r["id"], "side": r["side"], "units": r["units"],
             "entry_time": int(r["opened_at"].timestamp()), "entry_price": r["entry_price"],
             "exit_time": int(r["closed_at"].timestamp()), "exit_price": r["exit_price"],
-            "costs": round(_of(r).spread * r["units"], 2), "swap": r["swap"], "pnl": r["pnl"], "symbol": r["symbol"],
+            "costs": round(_of(r).spread * r["units"] * _of(r).usd(r["exit_price"]), 2), "swap": r["swap"], "pnl": r["pnl"], "symbol": r["symbol"],
             "stop_loss": r["stop_loss"], "take_profit": r["take_profit"], "exit_reason": r["close_reason"],
         })
     rep = build_report(trades, equity, capital)

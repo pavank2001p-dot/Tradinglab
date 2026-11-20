@@ -58,7 +58,7 @@ def test_sample_markets_load_and_chart(client):
     m = {x["symbol"]: x for x in client.get("/prices/markets").json()["markets"]}
     assert m["EURUSD"]["price"] and 0.5 < m["EURUSD"]["price"] < 2
     assert m["BTCUSD"]["price"] > 10_000 and m["XAUUSD"]["price"] is None
-    assert m["BTCUSD"]["max_leverage"] == 10 and m["AAPLUSUSD"]["class_label"] == "US stocks"
+    assert m["BTCUSD"]["max_leverage"] == 10 and m["AAPLUSUSD"]["class_label"] == "Stocks"
 
     eur = client.get("/prices/candles", params={"symbol": "EURUSD", "tf": "1d", "limit": 50}).json()
     assert eur["symbol"] == "EURUSD" and eur["bars"] and eur["bars"][-1]["c"] < 2

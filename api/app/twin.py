@@ -22,6 +22,7 @@ from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends
 
 from . import db
+from . import instruments as ins
 from .auth import UserOut, current_user
 from .coach import TAGS, _limit, tag_trades
 
@@ -45,6 +46,7 @@ def replay(t: dict, bars: list[dict], limit_pct: float, equity: float) -> dict:
         k = next(k for k in SKIP if k in t["tags"])
         return {"pnl": 0.0, "costs": {k: pnl - 0.0}, "rule": f"Skipped: {TAGS[k][0].lower()}"}
     sign = 1 if t["side"] == "long" else -1
+    fx = ins.known(t.get("symbol")).usd(t["entry_price"])  # dollars per unit of the market's quote currency
     costs: dict[str, float] = {}
     rule = []
     stop = t["stop_loss"]
@@ -53,18 +55,19 @@ def replay(t: dict, bars: list[dict], limit_pct: float, equity: float) -> dict:
     if "stop_widened" in t["tags"] and t.get("planned_stop") is not None:
         planned, tag = t["planned_stop"], "stop_widened"
     elif "no_stop" in t["tags"] or ("stop_widened" in t["tags"] and stop is None):
-        planned = t["entry_price"] - sign * (equity * limit_pct / 100) / t["units"] if t["units"] > 0 and equity > 0 else None
+        planned = (t["entry_price"] - sign * (equity * limit_pct / 100) / (t["units"] * fx)
+                   if t["units"] > 0 and equity > 0 else None)
         tag = "no_stop" if "no_stop" in t["tags"] else "stop_widened"
     if planned is not None:
         stop = planned
         if stop_hit(t["side"], planned, bars):
-            twin = sign * (planned - t["entry_price"]) * t["units"]
+            twin = sign * (planned - t["entry_price"]) * t["units"] * fx
             rule.append("Kept the planned stop and was stopped out" if tag == "stop_widened" else "Used a stop at the limit and was stopped out")
         else:
             rule.append("Kept the planned stop" if tag == "stop_widened" else "Used a stop at the limit")
         costs[tag] = pnl - twin
     if stop is not None and equity > 0 and t["units"] > 0:
-        risk_pct = abs(t["entry_price"] - stop) * t["units"] / equity * 100
+        risk_pct = abs(t["entry_price"] - stop) * t["units"] * fx / equity * 100
         if risk_pct > limit_pct * 1.05:
             scaled = twin * limit_pct / risk_pct
             costs["oversized"] = twin - scaled

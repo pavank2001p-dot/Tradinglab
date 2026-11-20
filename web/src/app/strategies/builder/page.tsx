@@ -260,8 +260,8 @@ export default function BuilderPage() {
             <span className="bg-gradient-to-r from-gold via-gold-hi to-gold bg-clip-text text-transparent">Watch it trade.</span>
           </h1>
           <p className="mt-4 max-w-2xl text-muted">
-            Snap indicators together into rules. Every change is tested on real prices of the market you pick (gold, forex,
-            indices, stocks, oil or crypto) in a moment, with each buy and sell drawn on the chart.
+            Snap indicators together into rules. Every change is tested on real prices of the market you pick (commodities,
+            forex, world indices, stocks in any sector, ETFs or crypto) in a moment, with each buy and sell drawn on the chart.
           </p>
           <ol className="mt-7 flex flex-wrap gap-x-8 gap-y-3 text-sm">
             {["Pick an idea", "Shape the rules", "See every trade"].map((s, i) => (

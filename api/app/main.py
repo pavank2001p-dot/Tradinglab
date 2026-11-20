@@ -10,12 +10,20 @@ log = logging.getLogger("api")
 
 
 async def _price_updater():
+    probed = False
     while True:
         try:
             n = await asyncio.to_thread(ingest.update_all, config.PRICE_SOURCE)
             log.info("price update stored %d bars", n)
         except Exception:
             log.exception("price update failed")
+        if not probed:
+            # Once per start, after the core markets are fresh: find catalog markets the feed doesn't carry.
+            probed = True
+            try:
+                await asyncio.to_thread(ingest.probe, config.PRICE_SOURCE)
+            except Exception:
+                log.exception("market probe failed")
         await asyncio.sleep(config.UPDATE_INTERVAL_MIN * 60)
 
 

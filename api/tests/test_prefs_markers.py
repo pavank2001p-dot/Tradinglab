@@ -19,10 +19,15 @@ def test_prefs_follow_the_account(client):
 def test_markers_mix_history_and_calendar(client):
     from datetime import datetime, timezone
     a = int(datetime(2020, 3, 1, tzinfo=timezone.utc).timestamp())
-    b = int(datetime(2020, 4, 1, tzinfo=timezone.utc).timestamp())
+    b = int(datetime(2020, 5, 1, tzinfo=timezone.utc).timestamp())
     m = client.get(f"/calendar/markers?start={a}&end={b}").json()
     assert [e["title"] for e in m][:1] == ["Fed makes an emergency half-point cut"]
-    assert all(e["kind"] == "fed" and e["history"] for e in m)
+    assert all(e["history"] for e in m) and "US oil futures fall below zero" in [e["title"] for e in m]
+    # A market's chart only gets the turning points that belong on it.
+    gold = [e["title"] for e in client.get(f"/calendar/markers?start={a}&end={b}&symbol=XAUUSD").json()]
+    assert "US oil futures fall below zero" not in gold and "Fed cuts rates to near zero" in gold
+    oil = [e["title"] for e in client.get(f"/calendar/markers?start={a}&end={b}&symbol=LIGHTCMDUSD").json()]
+    assert "US oil futures fall below zero" in oil
     from app import db
     with db.conn() as c:
         c.execute("INSERT INTO events (ts, title, impact, source) VALUES ('2030-01-10T13:30Z', 'CPI m/m', 'High', 't'),"

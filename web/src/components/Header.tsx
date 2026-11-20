@@ -20,8 +20,8 @@ export const GROUPS: { label: string; items: Item[] }[] = [
   {
     label: msg("Market"),
     items: [
-      { href: "/chart", label: msg("Chart"), icon: "candles", blurb: msg("Any market live, and gold back to 1833") },
-      { href: "/news", label: msg("News and calendar"), icon: "news", blurb: msg("What's moving gold, and the Fed dates ahead") },
+      { href: "/chart", label: msg("Chart"), icon: "candles", blurb: msg("Every market live: commodities, forex, indices, stocks, ETFs, crypto") },
+      { href: "/news", label: msg("News and calendar"), icon: "news", blurb: msg("Headlines by market and sector, and the calendar ahead") },
     ],
   },
   {

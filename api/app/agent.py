@@ -523,9 +523,9 @@ def step(user_id: int, now: datetime | None = None) -> bool:
                 fill = price["ask"] if want == 1 else price["bid"]
                 eq, used = book.equity(price["bid"], now, m.symbol)
                 # Whole shares, coins to 4 places, everything else to 2.
-                units = max(eq, 0) * cfg.size_pct / 100 / fill
+                units = max(eq, 0) * cfg.size_pct / 100 / (fill * m.usd(fill))
                 units = float(int(units)) if m.unit == "share" else round(units, 4 if m.asset_class == "crypto" else 2)
-                need = units * price["bid"] * book.rate_for(m)
+                need = paper.value_usd(m, units, price["bid"]) * book.rate_for(m)
                 if units <= 0 or used + need > eq:
                     _log(c, user_id, "skip", f"Wanted to go {side} but the account doesn't have enough free margin for "
                                              f"{m.units_text(units)} of {m.name}. Lower the size or raise the account's leverage.")
@@ -582,7 +582,7 @@ def live_report(user_id: int) -> dict | None:
         equity.append((int(r["closed_at"].timestamp()), cash))
         trades.append({"side": r["side"], "units": r["units"], "entry_time": int(r["opened_at"].timestamp()),
                        "entry_price": r["entry_price"], "exit_time": int(r["closed_at"].timestamp()),
-                       "exit_price": r["exit_price"], "costs": round(cfg.market.spread * r["units"], 2), "swap": r["swap"],
+                       "exit_price": r["exit_price"], "costs": round(cfg.market.spread * r["units"] * cfg.market.usd(r["exit_price"]), 2), "swap": r["swap"],
                        "pnl": r["pnl"], "stop_loss": r["stop_loss"], "exit_reason": r["close_reason"]})
     rep = build_report(trades, equity, capital)
     start = ag["started_at"] - timedelta(seconds=TF_SECONDS[cfg.tf] * WARMUP_BARS)

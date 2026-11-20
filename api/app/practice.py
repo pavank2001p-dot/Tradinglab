@@ -329,7 +329,7 @@ class ReplayTrade(BaseModel):
     target: float | None = Field(None, gt=0)
 
 
-def settle(bars: list[dict], t: ReplayTrade) -> dict:
+def settle(bars: list[dict], t: ReplayTrade, m: ins.Instrument = ins.GOLD) -> dict:
     """Where one replay trade ends: at its stop or target if a later bar reaches it, else at the exit bar's close."""
     entry = bars[t.entry_bar]["c"]
     long = t.side == "long"
@@ -344,11 +344,12 @@ def settle(bars: list[dict], t: ReplayTrade) -> dict:
             gap = b["o"] > t.target if long else b["o"] < t.target
             exit_price, exit_bar, reason = (b["o"] if gap else t.target), i, "target"
             break
-    p = (exit_price - entry) * t.units * (1 if long else -1)
+    p = (exit_price - entry) * t.units * (1 if long else -1) * m.usd(exit_price)  # in US dollars
     return {"entry_price": entry, "exit_price": exit_price, "exit_bar": exit_bar, "reason": reason, "pnl": p}
 
 
-def score(bars: list[dict], trades: list[ReplayTrade], require_stop: bool, leverage: int = REPLAY_LEVERAGE) -> dict:
+def score(bars: list[dict], trades: list[ReplayTrade], require_stop: bool, leverage: int = REPLAY_LEVERAGE,
+          m: ins.Instrument = ins.GOLD) -> dict:
     """Settles every trade in order and checks the replay rules. Raises 422 when a rule is broken."""
     if not bars:
         raise HTTPException(422, "No candles to settle against")
@@ -359,17 +360,17 @@ def score(bars: list[dict], trades: list[ReplayTrade], require_stop: bool, lever
         if t.entry_bar < last_exit:
             raise HTTPException(422, f"Trade {k} opens before the previous trade closed")
         entry = bars[t.entry_bar]["c"]
-        if t.units * entry > cash * leverage + 0.01:
+        if t.units * entry * m.usd(entry) > cash * leverage + 0.01:
             raise HTTPException(422, f"Trade {k} is bigger than 1:{leverage} leverage allows")
         if t.stop is not None and ((t.stop >= entry) if t.side == "long" else (t.stop <= entry)):
             raise HTTPException(422, f"Trade {k} has its stop on the wrong side of the entry")
         if require_stop:
             if t.stop is None:
                 raise HTTPException(422, f"Trade {k} has no stop loss; every challenge trade needs one")
-            risk = abs(entry - t.stop) * t.units
+            risk = abs(entry - t.stop) * t.units * m.usd(entry)
             if risk > cash * CHALLENGE_RISK_PCT / 100 + 0.01:
                 raise HTTPException(422, f"Trade {k} risks more than {CHALLENGE_RISK_PCT:g}% of the balance")
-        s = settle(bars, t)
+        s = settle(bars, t, m)
         cash += s["pnl"]
         peak = max(peak, cash)
         dd = max(dd, (peak - cash) / peak * 100 if peak else 0)
@@ -448,7 +449,7 @@ def replay_settle(body: SettleIn):
     """Settles a free replay the same way the challenge is scored, so the two always agree."""
     m = market(body.symbol)
     _, session = _bars(body.tf, body.start, body.end, m.symbol)
-    return score(session, body.trades, require_stop=False, leverage=leverage_of(m))
+    return score(session, body.trades, require_stop=False, leverage=leverage_of(m), m=m)
 
 
 # ---------------------------------------------------------------------------
@@ -586,7 +587,7 @@ def enter(body: EntryIn, user: UserOut = Depends(current_user)):
             raise HTTPException(409, "You have already played this week's challenge")
     m = ins.BY_SYMBOL.get(w["symbol"], ins.GOLD)
     _, session = _bars(w["tf"], w["start_ts"], w["end_ts"], m.symbol)
-    result = score(session, body.trades, require_stop=True, leverage=leverage_of(m))
+    result = score(session, body.trades, require_stop=True, leverage=leverage_of(m), m=m)
     with db.conn() as c:
         c.execute(
             "INSERT INTO challenge_entries (user_id, week, return_pct, max_drawdown_pct, trades, wins, public, nickname) "

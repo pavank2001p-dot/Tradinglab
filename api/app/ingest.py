@@ -1,7 +1,13 @@
-"""Load market prices into the candles table (gold plus the markets in app.instruments).
+"""Load market prices into the candles table (every market in app.instruments).
 
     python -m app.ingest backfill [--source dukascopy|sample] [--since 2010-01-01] [--symbol XAUUSD]
-    python -m app.ingest update   [--source dukascopy|sample]   (every enabled market)
+    python -m app.ingest update   [--source dukascopy|sample]   (core markets plus those in use)
+    python -m app.ingest probe                                   (which catalog markets the feed carries)
+
+Core markets (instruments.CORE) are kept up to date all the time. Any other market is loaded the
+first time someone opens it (ensure) and kept up to date while it is in use: opened in the last
+ACTIVE_DAYS, or holding paper positions, orders, an agent or alerts. A market the feed turns out not
+to carry is marked unavailable and left out of the market list (probe).
 
 Long-run history: monthly prices since 1833 (bundled, public domain) are stored as '1mo' bars
 and fill the monthly chart before the first daily bar. See load_monthly_history.
@@ -18,6 +24,7 @@ import lzma
 import math
 import random
 import struct
+import threading
 import time
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
@@ -28,7 +35,7 @@ from zoneinfo import ZoneInfo
 import httpx
 
 from . import config, db
-from .instruments import ENABLED, GOLD, Instrument, fit_point
+from .instruments import CORE, ENABLED, GOLD, Instrument, fit_point
 
 log = logging.getLogger("ingest")
 UTC = timezone.utc
@@ -534,26 +541,178 @@ def update(source: str, inst: Instrument = GOLD) -> int:
 
 
 def update_all(source: str) -> int:
-    """Refresh every enabled market, gold first. One market failing doesn't stop the others."""
+    """Refresh the core markets and every market in use, gold first. One market failing doesn't stop
+    the others."""
     total = 0
+    active = active_symbols()
     for inst in ENABLED:
+        if inst.symbol not in CORE and inst.symbol not in active:
+            continue
+        if is_unavailable(inst):
+            continue
         try:
             total += update(source, inst)
+            _ready.add(inst.symbol)
         except Exception:
             log.exception("%s price update failed", inst.symbol)
     return total
 
 
+# ---------------------------------------------------------------------------
+# Markets loaded on first use
+# ---------------------------------------------------------------------------
+
+ACTIVE_DAYS = config.ACTIVE_DAYS
+UNAVAILABLE_RETRY_DAYS = 7
+_ready: set[str] = set()      # markets known to have stored prices
+_loading: set[str] = set()    # markets being loaded for the first time right now
+_touched: dict[str, float] = {}  # when each market's last use was saved (saved at most hourly)
+_lock = threading.Lock()
+
+
+def active_symbols() -> set[str]:
+    """Markets in use: opened in the last ACTIVE_DAYS, or with open paper positions, pending orders, a
+    running agent or price alerts."""
+    since = datetime.now(UTC) - timedelta(days=ACTIVE_DAYS)
+    with db.conn() as c:
+        rows = c.execute(
+            """SELECT substr(key, 11) AS s FROM meta WHERE key LIKE 'wanted_at:%%' AND updated_at >= %s
+               UNION SELECT symbol FROM paper_positions WHERE closed_at IS NULL
+               UNION SELECT symbol FROM paper_orders WHERE status = 'pending'
+               UNION SELECT config->>'symbol' FROM paper_agents WHERE status = 'running'
+               UNION SELECT symbol FROM price_alerts""", (since,)).fetchall()
+    return {r["s"] for r in rows if r["s"]}
+
+
+def _touch(inst: Instrument) -> None:
+    now = time.time()
+    if now - _touched.get(inst.symbol, 0) < 3600:
+        return
+    _touched[inst.symbol] = now
+    db.set_meta(f"wanted_at:{inst.symbol}", datetime.now(UTC).isoformat(timespec="seconds"))
+
+
+def is_unavailable(inst: Instrument) -> bool:
+    """Marked as missing from the feed within the last week (it is checked again after that)."""
+    when = db.get_meta(f"unavailable:{inst.symbol}")
+    return bool(when) and datetime.fromisoformat(when) > datetime.now(UTC) - timedelta(days=UNAVAILABLE_RETRY_DAYS)
+
+
+def unavailable_symbols() -> set[str]:
+    since = datetime.now(UTC) - timedelta(days=UNAVAILABLE_RETRY_DAYS)
+    with db.conn() as c:
+        rows = c.execute("SELECT substr(key, 13) AS s FROM meta WHERE key LIKE 'unavailable:%%' AND updated_at >= %s",
+                         (since,)).fetchall()
+    return {r["s"] for r in rows}
+
+
+def has_prices(inst: Instrument) -> bool:
+    if inst.symbol in _ready:
+        return True
+    with db.conn() as c:
+        row = c.execute("SELECT 1 FROM candles WHERE symbol = %s AND tf = '1h' LIMIT 1", (inst.symbol,)).fetchone()
+    if row:
+        _ready.add(inst.symbol)
+    return bool(row)
+
+
+def status(inst: Instrument) -> str:
+    """"ready", "loading" (first load running), "unavailable" (the feed doesn't carry it) or "on_demand"
+    (loads when opened)."""
+    if inst.symbol in _loading:
+        return "loading"
+    if has_prices(inst):
+        return "ready"
+    return "unavailable" if is_unavailable(inst) else "on_demand"
+
+
+def ensure(inst: Instrument, background: bool | None = None) -> str:
+    """Someone opened this market: note it as in use and, if it has no prices yet, start loading them.
+    Returns its status. Loading runs in a background thread when the scheduler is on (the server) and is
+    left to the scheduler's next run otherwise; background=False loads right here (scripts, tests)."""
+    _touch(inst)
+    st = status(inst)
+    if st != "on_demand":
+        return st
+    if background is None:
+        if not config.ENABLE_SCHEDULER:
+            return st
+        background = True
+    with _lock:
+        if inst.symbol in _loading:
+            return "loading"
+        _loading.add(inst.symbol)
+    if background:
+        threading.Thread(target=_first_load, args=(config.PRICE_SOURCE, inst), daemon=True,
+                         name=f"load-{inst.symbol}").start()
+        return "loading"
+    _first_load(config.PRICE_SOURCE, inst)
+    return status(inst)
+
+
+def _first_load(source: str, inst: Instrument) -> None:
+    try:
+        update(source, inst)
+        if has_prices(inst):
+            with db.conn() as c:
+                c.execute("DELETE FROM meta WHERE key = %s", (f"unavailable:{inst.symbol}",))
+        else:
+            mark_unavailable(inst)
+    except RuntimeError as e:  # the feed has no recent prices for it (see duka_point)
+        log.warning("%s: %s", inst.symbol, e)
+        mark_unavailable(inst)
+    except Exception:
+        log.exception("%s first load failed", inst.symbol)
+    finally:
+        _loading.discard(inst.symbol)
+
+
+def mark_unavailable(inst: Instrument) -> None:
+    db.set_meta(f"unavailable:{inst.symbol}", datetime.now(UTC).isoformat(timespec="seconds"))
+
+
+def probe(source: str = "dukascopy") -> dict[str, str]:
+    """Check once that the feed carries each catalog market, without loading its history: the scale check
+    (duka_point) reads one recent day. Markets it doesn't carry are marked unavailable and left out of the
+    list. Network errors leave a market as it was, to be checked next time."""
+    out: dict[str, str] = {}
+    if source != "dukascopy":
+        return out
+    headers = {"User-Agent": "goldlab-ingest/1.0"}
+    with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
+        for inst in ENABLED:
+            if inst.symbol == GOLD.symbol or db.get_meta(_key("duka_point", inst)) or is_unavailable(inst):
+                continue
+            try:
+                duka_point(client, inst)
+                out[inst.symbol] = "ok"
+            except RuntimeError:
+                mark_unavailable(inst)
+                out[inst.symbol] = "unavailable"
+            except Exception as e:  # noqa: BLE001 - a network hiccup is not a verdict
+                log.warning("probe %s failed: %s", inst.symbol, e)
+                out[inst.symbol] = "error"
+    if out:
+        log.info("probe: %s", ", ".join(f"{k} {v}" for k, v in sorted(out.items())))
+    return out
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = argparse.ArgumentParser()
-    p.add_argument("command", choices=["backfill", "update"])
+    p.add_argument("command", choices=["backfill", "update", "probe"])
     p.add_argument("--source", choices=["dukascopy", "sample"], default=config.PRICE_SOURCE)
     p.add_argument("--since", type=date.fromisoformat, default=None)
     p.add_argument("--symbol", default=GOLD.symbol)
     a = p.parse_args()
     db.migrate()
     load_monthly_history()
+    if a.command == "probe":
+        res = probe(a.source)
+        for k, v in sorted(res.items()):
+            print(f"{k:16} {v}")
+        db.close()
+        return
     if a.command == "backfill":
         from .instruments import get
         inst = get(a.symbol)

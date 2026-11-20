@@ -3,6 +3,7 @@
 Signals are computed on each bar's close and filled at the next bar's open, so a
 strategy never trades on information it could not have had. Stored prices are bids:
 longs buy at bid + spread and sell at bid; shorts sell at bid and buy back at bid + spread.
+Money is in US dollars: moves of a market quoted in another currency are converted at Instrument.usd.
 """
 
 import logging
@@ -878,6 +879,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     target = signals(cfg.strategy, cfg.params, bars, cfg.rules)
     allow = {"both": (1, -1), "long_only": (1,), "short_only": (-1,)}[cfg.direction]
     base_sp, u = cfg.spread, cfg.units
+    mkt = cfg.market
     sp, slip = base_sp, 0.0
     bar_len = 3600 if cfg.tf == "1h" else 86400
     # The spread given is scaled the same way the market's own spread would be.
@@ -886,7 +888,8 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     mslip = cfg.slippage or 0.0  # every market order fills this far past the quote
 
     def fee(units: float, price: float) -> float:
-        return ins.commission_for(units, price, cfg.commission_pct or 0.0, cfg.commission_per_unit or 0.0,
+        # The percentage is of the trade's value in dollars.
+        return ins.commission_for(units, price * mkt.usd(price), cfg.commission_pct or 0.0, cfg.commission_per_unit or 0.0,
                                   cfg.commission_min or 0.0)
 
     cash = cfg.capital
@@ -908,9 +911,10 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         exit_px = bid - extra if pos == 1 else bid + sp + extra
         # Longs pay the spread when they buy, shorts when they buy back; slippage comes on top.
         paid = entry_cost + (0.0 if pos == 1 else sp) + slip_paid + extra
+        fx = mkt.usd(exit_px)  # dollars per unit of the market's quote currency
         exit_fee = fee(u, exit_px)
         commission = entry_fee + exit_fee
-        gross = (exit_px - entry) * u * pos
+        gross = (exit_px - entry) * u * pos * fx
         pnl = gross + swap_acc - commission
         cash += pnl
         trades.append({
@@ -920,7 +924,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
             "entry_price": round(entry, 3),
             "exit_time": t,
             "exit_price": round(exit_px, 3),
-            "costs": round(paid * u + commission, 2),
+            "costs": round(paid * u * fx + commission, 2),
             "commission": round(commission, 2),
             "swap": round(swap_acc, 2),
             "pnl": round(pnl, 2),
@@ -933,7 +937,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         entry = bid + sp + mslip if side == 1 else bid - mslip
         pos, entry_t, entry_cost = side, t, (sp if side == 1 else 0.0) + mslip
         if cfg.size_pct:
-            u = max(cash, 0) * cfg.size_pct / 100 / entry
+            u = max(cash, 0) * cfg.size_pct / 100 / (entry * mkt.usd(entry))
         entry_fee = fee(u, entry)
 
     for i in range(1, len(bars)):
@@ -941,7 +945,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         if cond is not None and cond.on:
             t0 = datetime.fromtimestamp(b["t"], timezone.utc)
             sp = cond.spread(cfg.market, t0) * scale if cfg.tf == "1h" else base_sp
-            slip = base_sp * fills.NEWS_SLIP_X if cond.news_between(t0, t0 + timedelta(seconds=bar_len)) else 0.0
+            slip = base_sp * fills.NEWS_SLIP_X if cond.news_between(t0, t0 + timedelta(seconds=bar_len), mkt) else 0.0
         # Overnight financing for each trading-day rollover the position was held through.
         if pos:
             nights = (trading_date(b["t"]) - trading_date(prev["t"])).days
@@ -984,7 +988,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         if pos:
             in_market += 1
             mark = b["c"] if pos == 1 else b["c"] + sp
-            equity.append((b["t"], cash + (mark - entry) * u * pos + swap_acc - entry_fee))
+            equity.append((b["t"], cash + (mark - entry) * u * pos * mkt.usd(mark) + swap_acc - entry_fee))
         else:
             equity.append((b["t"], cash))
 

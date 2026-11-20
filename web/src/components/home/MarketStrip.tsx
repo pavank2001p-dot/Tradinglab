@@ -4,12 +4,13 @@ import Link from "next/link";
 import { fmtMarketPrice, ticker, useMarkets } from "@/lib/markets";
 
 const TONES: Record<string, string> = {
-  metals: "var(--gold)", energy: "var(--gold)", indices: "var(--calm)", forex: "var(--up)", stocks: "var(--rose)", crypto: "var(--violet)",
+  metals: "var(--gold)", energy: "var(--gold)", agriculture: "var(--gold)", indices: "var(--calm)", forex: "var(--up)",
+  stocks: "var(--rose)", etfs: "var(--rose)", crypto: "var(--violet)",
 };
 
-/** A slow, endless strip of every market on offer. Each one opens on the chart; hovering pauses it. */
+/** A slow, endless strip of the markets with live prices. Each one opens on the chart; hovering pauses it. */
 export default function MarketStrip() {
-  const markets = useMarkets();
+  const markets = useMarkets().filter((m) => m.price != null);
   if (markets.length < 2) return <div className="h-[46px]" />;
   const row = (hidden: boolean) => (
     <ul aria-hidden={hidden || undefined} className="flex shrink-0 items-center gap-2 pr-2">

@@ -180,7 +180,7 @@ def finish(sid: int, body: FinishIn, user: UserOut = Depends(current_user)):
         r = _own(c, sid, user.id)
     m = _market_of(r)
     bars = candles(r["tf"], r["start_at"], r["end_at"], m.symbol)["bars"]
-    result = score(bars, body.trades, require_stop=False, leverage=leverage_of(m))
+    result = score(bars, body.trades, require_stop=False, leverage=leverage_of(m), m=m)
     with db.conn() as c:
         row = c.execute(f"UPDATE replay_sessions SET finished = true, result = %s, updated_at = now() WHERE id = %s "
                         f"RETURNING {SESSION_COLS}", (Jsonb(result), sid)).fetchone()

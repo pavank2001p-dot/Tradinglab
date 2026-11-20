@@ -7,11 +7,19 @@ from app import calendar, config, news, risk
 UTC = timezone.utc
 
 
-def test_relevance():
+def test_relevance_and_markets():
     assert news.relevance("Gold hits record as dollar slides") == 2
     assert news.relevance("Fed's Powell signals rate cuts later this year") == 1
-    assert news.relevance("Apple unveils new iPhone") == 0
-    assert news.relevance("Goldman Sachs earnings beat") == 0  # word boundary, not "gold"
+    assert news.relevance("Apple unveils new iPhone") == 2
+    assert news.relevance("Local council approves new park") == 0
+    syms, secs = news.classify_text("Goldman Sachs earnings beat")
+    assert syms == ["GSUSUSD"] and "stocks:Financials" in secs  # word boundary: Goldman, not gold
+    assert news.classify_text("Oil jumps as OPEC+ cuts output")[0] == ["LIGHTCMDUSD", "BRENTCMDUSD"]
+    assert news.classify_text("Yen weakens as BoJ holds")[0] == ["USDJPY"]
+    assert news.classify_text("Bank stocks rally after stress test") == ([], ["indices", "stocks", "stocks:Financials"])
+    assert news.classify_text("Nifty and Sensex hit records")[0][0] == "INDIDXUSD"
+    assert news.classify_text("Analysts upgrade the stock", related="NVDA")[0] == ["NVDAUSUSD"]
+    assert news.classify_text("an apple a day")[0] == []  # company names are case-sensitive
 
 
 class FakeClient:
@@ -62,7 +70,36 @@ def test_news_store_tag_and_list(client, monkeypatch):
 
     body = client.get("/news").json()
     assert [i["impact"] for i in body["items"]] == ["bullish", "bearish"]
+    assert body["items"][0]["focus"] == "XAUUSD" and body["items"][0]["focus_name"] == "Gold"
+    assert body["items"][1]["focus"] == "USA500IDXUSD"  # macro news is tagged for US stocks
+    # The market said which market each tag is for.
+    assert "market: Gold (XAU/USD)" in fake.calls[0]["messages"][0]["content"]
     assert len(client.get("/news", params={"gold_only": True}).json()["items"]) == 1
+    assert len(client.get("/news", params={"sector": "macro"}).json()["items"]) == 1
+
+
+def test_news_by_market_and_sector(client):
+    now = datetime.now(UTC)
+    heads = ["Gold climbs to record", "Bank stocks rally after stress test", "JPMorgan beats estimates",
+             "Oil slides as inventories build", "Bitcoin tops $100,000"]
+    news.store([{"source": "finnhub", "external_id": str(i), "headline": h, "summary": "", "url": "", "publisher": "X",
+                 "published_at": now - timedelta(minutes=i), "relevance": news.relevance(h)} for i, h in enumerate(heads)])
+    get = lambda **p: [i["headline"] for i in client.get("/news", params=p).json()["items"]]  # noqa: E731
+    assert get(symbol="JPMUSUSD") == ["Bank stocks rally after stress test", "JPMorgan beats estimates"]
+    assert get(sector="stocks:Financials") == ["Bank stocks rally after stress test", "JPMorgan beats estimates"]
+    assert get(sector="energy") == ["Oil slides as inventories build"]
+    assert get(symbol="BTCUSD") == ["Bitcoin tops $100,000"]
+    assert get(sector="crypto") == ["Bitcoin tops $100,000"]
+
+
+def test_old_gold_headlines_get_markets(client):
+    from app import db
+    with db.conn() as c:
+        c.execute("INSERT INTO news (source, external_id, headline, published_at, relevance, impact, reason) "
+                  "VALUES ('finnhub', 'old', 'Fed holds rates', now(), 1, 'bullish', 'Lower rates help gold.')")
+    assert news.backfill_markets() == 1
+    item = client.get("/news", params={"symbol": "XAUUSD"}).json()["items"][0]
+    assert item["focus"] == "XAUUSD" and "XAUUSD" in item["symbols"]
 
 
 def test_calendar_seed_feed_and_list(client, monkeypatch):
@@ -78,10 +115,14 @@ def test_calendar_seed_feed_and_list(client, monkeypatch):
         def json(self): return feed
 
     monkeypatch.setattr(calendar.httpx, "get", lambda *a, **k: Resp())
-    assert calendar.update() == 1
+    assert calendar.update() == 2  # US and euro-area releases; low-impact ones are left out
     events = client.get("/calendar", params={"days": 30}).json()
     cpi = next(e for e in events if e["title"] == "CPI m/m")
     assert cpi["forecast"] == "0.3%" and "inflation" in cpi["why"].lower()
+    # Each market sees the US calendar plus its own economies: EUR/USD and the DAX get the German release.
+    titles = lambda s: {e["title"] for e in client.get("/calendar", params={"days": 30, "symbol": s}).json()}  # noqa: E731
+    assert "German ZEW" in titles("EURUSD") and "German ZEW" in titles("DEUIDXEUR")
+    assert "German ZEW" not in titles("USDJPY") and "CPI m/m" in titles("USDJPY")
     with __import__("app.db", fromlist=["conn"]).conn() as c:
         assert c.execute("SELECT count(*) AS n FROM events WHERE title = 'FOMC rate decision'").fetchone()["n"] == 8
 
