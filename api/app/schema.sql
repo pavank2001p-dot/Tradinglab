@@ -420,3 +420,9 @@ CREATE TABLE IF NOT EXISTS page_views (
 
 -- The stop a position had before it was first moved further away (app/twin.py trades the plan with it).
 ALTER TABLE paper_positions ADD COLUMN IF NOT EXISTS planned_stop DOUBLE PRECISION;
+
+-- Every lab tool runs on any market (app.instruments): replay sessions, the weekly challenge and price alerts
+-- remember theirs. Older rows were all gold.
+ALTER TABLE replay_sessions ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'XAUUSD';
+ALTER TABLE challenges ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'XAUUSD';
+ALTER TABLE price_alerts ADD COLUMN IF NOT EXISTS symbol TEXT NOT NULL DEFAULT 'XAUUSD';

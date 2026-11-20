@@ -5,7 +5,8 @@ import {
   CandlestickSeries, ColorType, createChart, createSeriesMarkers, LineStyle,
   type IChartApi, type IPriceLine, type ISeriesApi, type ISeriesMarkersPluginApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
-import { fmtPrice, fmtUsd, type ReplayBar, type ReplaySettled, type ReplayTradeIn } from "@/lib/api";
+import { fmtUsd, type Market, type ReplayBar, type ReplaySettled, type ReplayTradeIn } from "@/lib/api";
+import { fmtMarketPrice, GOLD, unitsLabel } from "@/lib/markets";
 import { hits, settle } from "@/lib/replay";
 import { useThemeKey } from "@/lib/theme";
 import { toast } from "../Toaster";
@@ -48,8 +49,16 @@ function chartOptions(blind: boolean) {
   };
 }
 
+/** Price axis labels with the market's own decimals (5 for EUR/USD, 2 for gold). */
+const priceFormat = (d: number) => ({ type: "price" as const, precision: d, minMove: 10 ** -d });
+/** Sizes are whole shares, coins to 4 places and everything else to 2. */
+const floorSize = (n: number, m: Pick<Market, "unit" | "asset_class">) => {
+  const k = m.unit === "share" ? 1 : m.asset_class === "crypto" ? 10_000 : 100;
+  return Math.floor(n * k) / k;
+};
+
 /** The higher timeframe beside the replay, revealed in step with it. */
-function HigherChart({ higher, shown, blind, label }: { higher: Higher; shown: ReplayBar[]; blind: boolean; label: string }) {
+function HigherChart({ higher, shown, blind, label, decimals = 2 }: { higher: Higher; shown: ReplayBar[]; blind: boolean; label: string; decimals?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const ref = useRef<ISeriesApi<"Candlestick"> | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -59,10 +68,11 @@ function HigherChart({ higher, shown, blind, label }: { higher: Higher; shown: R
     const chart = createChart(box.current!, opts);
     ref.current = chart.addSeries(CandlestickSeries, {
       upColor: v("--up"), downColor: v("--down"), borderVisible: false, wickUpColor: v("--up"), wickDownColor: v("--down"), priceLineColor: v("--gold"),
+      priceFormat: priceFormat(decimals),
     });
     chartRef.current = chart;
     return () => { chart.remove(); ref.current = null; chartRef.current = null; };
-  }, [themeKey, blind]);
+  }, [themeKey, blind, decimals]);
   const data = useMemo(() => {
     const own = aggregate(shown, higher.seconds);
     const first = own[0]?.t ?? Infinity;
@@ -82,8 +92,10 @@ function HigherChart({ higher, shown, blind, label }: { higher: Higher; shown: R
 
 /** Reveals past candles one at a time and lets the user trade them with virtual money.
  *  With riskPct set (the challenge), every trade needs a stop that risks no more than that share of the balance. */
-export default function ReplayPlayer({ bars, context, balance, leverage, riskPct, onFinish, height = 420, blind = false, higher, initial, onState }: {
+export default function ReplayPlayer({ bars, context, balance, leverage, riskPct, onFinish, height = 420, blind = false, higher, initial, onState, market }: {
   bars: ReplayBar[]; context: ReplayBar[]; balance: number; leverage: number; riskPct?: number;
+  /** The market being replayed (gold if not given): its price decimals and the unit sizes are in. */
+  market?: Market;
   onFinish: (trades: ReplayTradeIn[], done: ReplaySettled[]) => void; height?: number;
   /** Hide dates and times until the replay ends, so memory of what happened can't steer the trades. */
   blind?: boolean;
@@ -103,7 +115,12 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
   const [pos, setPos] = useState<Open | null>(initial?.pos ?? null);
   const [done, setDone] = useState<ReplaySettled[]>(initial?.done ?? []);
   const [finished, setFinished] = useState(false);
-  const [units, setUnits] = useState(initial?.units ?? "10");
+  const m = market ?? GOLD;
+  const dec = m.decimals;
+  const fmtPrice = (p: number) => fmtMarketPrice(p, m);
+  const roundPx = (p: number) => Math.round(p * 10 ** dec) / 10 ** dec;
+  const unit = m.unit === "ounce" ? "oz" : unitsLabel(m);
+  const [units, setUnits] = useState(initial?.units ?? String(market ? m.default_units : 10));
   const [stopDist, setStopDist] = useState(initial?.stopDist ?? (riskPct ? "5" : ""));
   const [targetDist, setTargetDist] = useState(initial?.targetDist ?? "");
   const hide = blind && !finished;
@@ -127,11 +144,11 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
     const chart = createChart(el, opts);
     const series = chart.addSeries(CandlestickSeries, {
       upColor: v("--up"), downColor: v("--down"), borderVisible: false, wickUpColor: v("--up"), wickDownColor: v("--down"),
-      priceLineColor: v("--gold"),
+      priceLineColor: v("--gold"), priceFormat: priceFormat(dec),
     });
     chartRef.current = { chart, series, markers: createSeriesMarkers(series, []) };
     return () => { chart.remove(); chartRef.current = null; lines.current = []; };
-  }, [themeKey, hide]);
+  }, [themeKey, hide, dec]);
 
   // Candles, markers and the open trade's lines.
   useEffect(() => {
@@ -190,11 +207,11 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
       open = null;
       setDone(closed);
       setPos(null);
-      toast(s.reason === "stop" ? "Stopped out" : "Target reached", { body: `${s.pnl >= 0 ? "+" : ""}${fmtUsd(s.pnl)} at ${fmtPrice(s.exit_price)}`, tone: s.pnl >= 0 ? "up" : "down" });
+      toast(s.reason === "stop" ? "Stopped out" : "Target reached", { body: `${s.pnl >= 0 ? "+" : ""}${fmtUsd(s.pnl)} at ${fmtMarketPrice(s.exit_price, m)}`, tone: s.pnl >= 0 ? "up" : "down" });
     }
     setK(j + 1);
     if (j + 1 >= bars.length) finish(open, closed, j);
-  }, [k, bars, pos, done, finished, finish]);
+  }, [k, bars, pos, done, finished, finish, m]);
 
   useEffect(() => {
     if (!playing) return;
@@ -212,21 +229,21 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
     if (!stop || !(r > 0)) return null;
     const byRisk = (cash * r) / 100 / stop;
     const byMargin = (cash * leverage) / price;
-    return Math.floor(Math.min(byRisk, byMargin) * 100) / 100;
-  }, [riskInput, stop, cash, leverage, price]);
+    return floorSize(Math.min(byRisk, byMargin), m);
+  }, [riskInput, stop, cash, leverage, price, m]);
 
   function open(side: "long" | "short") {
     setError(null);
     if (pos || finished) return;
-    if (!(oz > 0)) return setError("Enter a size in ounces.");
-    if (oz * price > cash * leverage + 0.01) return setError(`That's more than 1:${leverage} leverage allows. Most you can open is ${Math.floor((cash * leverage / price) * 100) / 100} oz.`);
-    if (stop != null && !(stop > 0)) return setError("A stop distance is a positive number of dollars.");
+    if (!(oz > 0)) return setError(`Enter a size in ${unitsLabel(m)}.`);
+    if (oz * price > cash * leverage + 0.01) return setError(`That's more than 1:${leverage} leverage allows. Most you can open is ${floorSize(cash * leverage / price, m)} ${unit}.`);
+    if (stop != null && !(stop > 0)) return setError("A stop distance is a positive price distance.");
     if (riskPct != null && stop == null) return setError("Every challenge trade needs a stop.");
     if (riskPct != null && tooRisky) return setError(`That risks ${fmtUsd(risk)}, more than ${riskPct}% of your balance. Use a smaller size or a closer stop.`);
     const dir = side === "long" ? 1 : -1;
-    setPos({ side, units: oz, entry_bar: i, stop: stop != null ? Math.round((price - dir * stop) * 100) / 100 : null,
-      target: target ? Math.round((price + dir * target) * 100) / 100 : null });
-    toast(side === "long" ? "Bought" : "Sold", { body: `${oz} oz at ${fmtPrice(price)}`, tone: "fill" });
+    setPos({ side, units: oz, entry_bar: i, stop: stop != null ? roundPx(price - dir * stop) : null,
+      target: target ? roundPx(price + dir * target) : null });
+    toast(side === "long" ? "Bought" : "Sold", { body: `${oz} ${unit} at ${fmtPrice(price)}`, tone: "fill" });
   }
 
   function close() {
@@ -278,7 +295,7 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
           <div style={{ "--h": `${height}px` } as React.CSSProperties} className="grid lg:h-[var(--h)] lg:grid-cols-[3fr_2fr]">
             <div ref={box} className="h-[300px] w-full lg:h-full" />
             <div className="h-[220px] border-t border-border lg:h-full lg:border-l lg:border-t-0">
-              <HigherChart higher={higher} shown={shownBars} blind={hide} label={`${TF_NAME[higher.tf] ?? higher.tf} candles`} />
+              <HigherChart higher={higher} shown={shownBars} blind={hide} decimals={dec} label={`${TF_NAME[higher.tf] ?? higher.tf} candles`} />
             </div>
           </div>
         ) : (
@@ -298,7 +315,7 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
           </p>
           {pos && (
             <div className="mt-3 rounded-xl bg-background/50 p-2.5 text-xs">
-              <p className="flex justify-between"><span className="font-medium">{pos.side === "long" ? "Long" : "Short"} {pos.units} oz</span>
+              <p className="flex justify-between"><span className="font-medium">{pos.side === "long" ? "Long" : "Short"} {pos.units} {unit}</span>
                 <span className={`tabular-nums ${openPnl >= 0 ? "text-up" : "text-down"}`}>{openPnl >= 0 ? "+" : ""}{fmtUsd(openPnl)}</span></p>
               <p className="mt-1 text-muted tabular-nums">Entry {fmtPrice(bars[pos.entry_bar].c)}{pos.stop != null ? ` · stop ${fmtPrice(pos.stop)}` : ""}{pos.target != null ? ` · target ${fmtPrice(pos.target)}` : ""}</p>
             </div>
@@ -307,9 +324,9 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
 
         <div className="card space-y-3 p-4 max-lg:order-first">
           <div className="grid grid-cols-3 gap-2 text-xs">
-            <label><span className="text-muted">Ounces</span><input inputMode="decimal" value={units} onChange={(e) => setUnits(e.target.value)} className={`mt-1 ${field}`} /></label>
-            <label><span className="text-muted">Stop, $ away{riskPct ? "" : " (opt.)"}</span><input inputMode="decimal" value={stopDist} onChange={(e) => setStopDist(e.target.value)} placeholder="none" className={`mt-1 ${field}`} /></label>
-            <label><span className="text-muted">Target, $ away</span><input inputMode="decimal" value={targetDist} onChange={(e) => setTargetDist(e.target.value)} placeholder="none" className={`mt-1 ${field}`} /></label>
+            <label><span className="text-muted capitalize">{unitsLabel(m)}</span><input inputMode="decimal" value={units} onChange={(e) => setUnits(e.target.value)} className={`mt-1 ${field}`} /></label>
+            <label><span className="text-muted">Stop, {m.symbol === GOLD.symbol ? "$" : "price"} away{riskPct ? "" : " (opt.)"}</span><input inputMode="decimal" value={stopDist} onChange={(e) => setStopDist(e.target.value)} placeholder="none" className={`mt-1 ${field}`} /></label>
+            <label><span className="text-muted">Target, {m.symbol === GOLD.symbol ? "$" : "price"} away</span><input inputMode="decimal" value={targetDist} onChange={(e) => setTargetDist(e.target.value)} placeholder="none" className={`mt-1 ${field}`} /></label>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
             Size for
@@ -317,7 +334,7 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
             % risk
             <button type="button" disabled={sizeFor == null || sizeFor <= 0} onClick={() => sizeFor && setUnits(String(sizeFor))}
               className="rounded-full border border-border px-2 py-0.5 text-foreground disabled:opacity-40 hover:border-gold/50">
-              {sizeFor != null ? `Use ${sizeFor} oz` : "Set a stop first"}
+              {sizeFor != null ? `Use ${sizeFor} ${unit}` : "Set a stop first"}
             </button>
           </div>
           {risk != null && (

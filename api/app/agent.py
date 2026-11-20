@@ -3,7 +3,8 @@ user's paper account, and explains what went wrong in both, with fixes tested on
 
 The explanations are worked out from the data here: the market regime (trend or range, calm or
 volatile) around each trade, stop distances against normal volatility, costs, direction, losing
-streaks and the worst drawdown, with the Fed and inflation dates and gold headlines from that time.
+streaks and the worst drawdown, with the Fed and inflation dates and market headlines from that time.
+It runs on any market in app.instruments (gold by default).
 The AI coach (the assistant) only puts these results into words. Nothing here is advice to trade,
 and the agent only ever trades virtual money."""
 
@@ -19,6 +20,7 @@ from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from . import backtest as bt
 from . import config, db, paper
+from . import instruments as ins
 from .auth import UserOut, current_user
 from .custom import Rules
 from .fit import assess
@@ -41,6 +43,7 @@ AGENT_KIND = "agent"
 
 class AgentConfig(BaseModel):
     strategy: Literal[tuple(k for k in bt.STRATEGIES if k != "buy_and_hold") + ("custom",)]  # type: ignore[valid-type]
+    symbol: str = Field(config.SYMBOL, description="Market the agent tests and trades (see /prices/markets)")
     params: dict[str, float] = {}
     rules: Rules | None = None
     tf: Literal["1h", "1d"] = "1d"
@@ -52,18 +55,23 @@ class AgentConfig(BaseModel):
     def _check(self):
         # Reuse the backtester's checks on the strategy settings.
         try:
-            cfg = bt.BacktestIn(strategy=self.strategy, params=self.params, rules=self.rules, tf=self.tf, direction=self.direction)
+            cfg = bt.BacktestIn(strategy=self.strategy, symbol=self.symbol, params=self.params, rules=self.rules, tf=self.tf,
+                                direction=self.direction)
         except ValidationError as e:
             raise ValueError(e.errors()[0]["msg"].removeprefix("Value error, "))
-        self.params, self.rules = cfg.params, cfg.rules
+        self.params, self.rules, self.symbol = cfg.params, cfg.rules, cfg.symbol
         return self
+
+    @property
+    def market(self) -> ins.Instrument:
+        return ins.get(self.symbol)
 
     @property
     def label(self) -> str:
         return bt.label_of(self.strategy, self.rules)
 
     def backtest(self, capital: float = 10_000, **changes) -> bt.BacktestIn:
-        d = {"strategy": self.strategy, "params": self.params, "rules": self.rules, "tf": self.tf, "direction": self.direction,
+        d = {"strategy": self.strategy, "symbol": self.symbol, "params": self.params, "rules": self.rules, "tf": self.tf, "direction": self.direction,
              "stop_loss_pct": self.stop_loss_pct, "size_pct": self.size_pct, **changes}
         return bt.BacktestIn(capital=capital, start=date(2000, 1, 1), **d)
 
@@ -116,7 +124,7 @@ def _r(x, n=2):
 
 
 def _context(start: int, end: int) -> dict:
-    """Scheduled events and gold headlines between two times."""
+    """Scheduled events and headlines between two times."""
     s, e = datetime.fromtimestamp(start, timezone.utc), datetime.fromtimestamp(end, timezone.utc)
     with db.conn() as c:
         events = c.execute("SELECT ts, title FROM events WHERE ts >= %s AND ts <= %s ORDER BY ts LIMIT 200", (s, e)).fetchall()
@@ -179,7 +187,7 @@ def diagnose(bars: list[dict], trades: list[dict], equity: list[dict], strategy:
     if wt["trades"] and (wt["pnl"] or 0) < 0 and share >= 30:
         if kind == "trend" and worst_trend == "range":
             title, why = "Whipsawed in sideways markets", (
-                "Trend-following signals flip back and forth when gold moves sideways, so each new trade starts "
+                "Trend-following signals flip back and forth when the market moves sideways, so each new trade starts "
                 "just before the move fades.")
         elif kind == "reversion" and worst_trend != "range":
             title, why = f"Fought {TREND_LABEL[worst_trend]}", (
@@ -219,7 +227,7 @@ def diagnose(bars: list[dict], trades: list[dict], equity: list[dict], strategy:
         tight = [r for r in stopped if stop_pct < r["atr_pct"]]
         if len(stopped) >= 3 and len(tight) / len(stopped) >= 0.4:
             findings.append({"key": "tight_stops", "severity": "high", "title": "Stops sat inside normal price noise",
-                             "detail": f"{len(tight)} of {len(stopped)} stop-outs had a {stop_pct}% stop when gold's usual "
+                             "detail": f"{len(tight)} of {len(stopped)} stop-outs had a {stop_pct}% stop when the market's usual "
                                        f"{'hourly' if len(bars) > 1 and bars[1]['t'] - bars[0]['t'] < 86400 else 'daily'} range "
                                        f"(ATR) was wider, so ordinary swings closed trades that might have recovered."})
         elif len(stopped) >= 3 and len(stopped) / max(len(rows), 1) >= 0.5:
@@ -232,7 +240,7 @@ def diagnose(bars: list[dict], trades: list[dict], equity: list[dict], strategy:
     calm = sum(r["pnl"] for r in rest)
     # Only when volatile trades did worse per trade than the others.
     if len(vol) >= 3 and sum(r["pnl"] for r in vol) < 0 and sum(r["pnl"] for r in vol) / len(vol) < calm / max(len(rest), 1):
-        findings.append({"key": "volatility", "severity": "medium", "title": "Lost when gold was most volatile",
+        findings.append({"key": "volatility", "severity": "medium", "title": "Lost when the market was most volatile",
                          "detail": f"Trades opened in the most volatile quarter of the period lost ${-sum(r['pnl'] for r in vol):,.0f}; "
                                    f"the rest {'made' if calm >= 0 else 'lost'} ${abs(calm):,.0f}."})
 
@@ -343,7 +351,7 @@ def fixes(cfg: AgentConfig, bars: list[dict], diag: dict, base: dict, profile: s
     if atr and ({"tight_stops", "many_stops", "volatility"} & keys or cfg.stop_loss_pct < atr):
         stop = max(round(atr * 1.5 * 2) / 2, 0.5)
         if stop > cfg.stop_loss_pct:
-            cand.append((f"Wider stop of {stop}%", f"About 1.5 times gold's usual range, with the size cut so a stop-out "
+            cand.append((f"Wider stop of {stop}%", f"About 1.5 times the market's usual range, with the size cut so a stop-out "
                          f"costs the same as before.", {"stop_loss_pct": stop, "size_pct": cfg.size_pct * cfg.stop_loss_pct / stop}))
     if "shorts" in keys and cfg.direction != "long_only":
         cand.append(("Long trades only", "Skips the short trades that lost money in a rising market.", {"direction": "long_only"}))
@@ -415,10 +423,10 @@ def _profile(user_id: int) -> str | None:
 
 def past(body: PastIn, user_id: int) -> dict:
     start = date.today() - timedelta(days=round(body.years * 365.25))
-    bars = bt.load_bars(body.tf, start, None)
-    if len(bars) < 60:
-        raise HTTPException(422, "Not enough price history for that period yet")
     cfg = AgentConfig(**body.model_dump(exclude={"years"}))
+    bars = bt.load_bars(body.tf, start, None, cfg.symbol)
+    if len(bars) < 60:
+        raise HTTPException(422, f"Not enough price history for that period on {cfg.market.name} yet")
     rep = bt.run(cfg.backtest(), bars)
     profile = _profile(user_id)
     diag = diagnose(bars, rep["trades"], rep["equity"], cfg.strategy, cfg.stop_loss_pct, 10_000, profile)
@@ -444,10 +452,10 @@ def _log(c, user_id: int, kind: str, message: str) -> None:
     c.execute("INSERT INTO paper_agent_log (user_id, kind, message) VALUES (%s, %s, %s)", (user_id, kind, message))
 
 
-def _closed_bars(c, tf: str, now: datetime) -> list[dict]:
+def _closed_bars(c, tf: str, now: datetime, symbol: str = config.SYMBOL) -> list[dict]:
     rows = c.execute(
         """SELECT extract(epoch FROM ts)::bigint AS t, open AS o, high AS h, low AS l, close AS c FROM candles
-           WHERE symbol = %s AND tf = %s ORDER BY ts DESC LIMIT %s""", (config.SYMBOL, tf, WARMUP_BARS + 1)).fetchall()
+           WHERE symbol = %s AND tf = %s ORDER BY ts DESC LIMIT %s""", (symbol, tf, WARMUP_BARS + 1)).fetchall()
     rows.reverse()
     return [r for r in rows if r["t"] + TF_SECONDS[tf] <= now.timestamp()]
 
@@ -460,8 +468,9 @@ def step(user_id: int, now: datetime | None = None) -> bool:
         if not ag:
             return False
         cfg = AgentConfig(**ag["config"])
-        acct, book, price = paper.sync(c, user_id)
-        bars = _closed_bars(c, cfg.tf, now)
+        m = cfg.market
+        acct, book, price = paper.sync(c, user_id, m.symbol)
+        bars = _closed_bars(c, cfg.tf, now, m.symbol)
         if len(bars) < 60:
             if ag["note"] != "warmup":
                 _log(c, user_id, "wait", "Waiting for enough price history to compute the strategy's signal.")
@@ -501,8 +510,8 @@ def step(user_id: int, now: datetime | None = None) -> bool:
                     c.execute("UPDATE paper_agents SET note = 'closed' WHERE user_id = %s", (user_id,))
                 return False
             if pos:
-                row = book.close(pos, paper._exit_price(pos["side"], price["bid"]), now, AGENT_KIND)
-                _log(c, user_id, "close", f"Closed the {pos['side']} position at ${row['exit_price']:,.2f} because {label} "
+                row = book.close(pos, paper._exit_price(pos["side"], price["bid"], m), now, AGENT_KIND)
+                _log(c, user_id, "close", f"Closed the {pos['side']} position at {m.price_text(row['exit_price'])} because {label} "
                                           f"{'turned ' + ('long' if want == 1 else 'short') if want else 'went flat'} on the "
                                           f"{candle} candle ({'+' if row['pnl'] >= 0 else '-'}${abs(row['pnl']):,.2f}).")
                 traded = True
@@ -512,18 +521,21 @@ def step(user_id: int, now: datetime | None = None) -> bool:
             elif want:
                 side = "long" if want == 1 else "short"
                 fill = price["ask"] if want == 1 else price["bid"]
-                eq, used = book.equity(price["bid"], now)
-                units = round(max(eq, 0) * cfg.size_pct / 100 / fill, 2)
-                need = units * price["bid"] * book.rate
+                eq, used = book.equity(price["bid"], now, m.symbol)
+                # Whole shares, coins to 4 places, everything else to 2.
+                units = max(eq, 0) * cfg.size_pct / 100 / fill
+                units = float(int(units)) if m.unit == "share" else round(units, 4 if m.asset_class == "crypto" else 2)
+                need = units * price["bid"] * book.rate_for(m)
                 if units <= 0 or used + need > eq:
                     _log(c, user_id, "skip", f"Wanted to go {side} but the account doesn't have enough free margin for "
-                                             f"{units:,.2f} oz. Lower the size or raise the account's leverage.")
+                                             f"{m.units_text(units)} of {m.name}. Lower the size or raise the account's leverage.")
                 else:
-                    stop = round(fill * (1 - cfg.stop_loss_pct / 100) if want == 1 else fill * (1 + cfg.stop_loss_pct / 100), 2)
-                    p = book.open(side, units, fill, now, stop, None, AGENT_KIND)
+                    stop = m.round(fill * (1 - cfg.stop_loss_pct / 100) if want == 1 else fill * (1 + cfg.stop_loss_pct / 100))
+                    p = book.open(side, units, fill, now, stop, None, AGENT_KIND, m.symbol)
                     c.execute("UPDATE paper_positions SET agent = true WHERE id = %s", (p["id"],))
                     pid = p["id"]
-                    _log(c, user_id, "open", f"Opened {side} {units:,.2f} oz at ${fill:,.2f} with a stop at ${stop:,.2f}, "
+                    _log(c, user_id, "open", f"Opened {side} {m.units_text(units)} of {m.name} at {m.price_text(fill)} "
+                                             f"with a stop at {m.price_text(stop)}, "
                                              f"because {label} turned {side} on the {candle} candle.")
                     traded = True
             c.execute("UPDATE paper_accounts SET balance = %s WHERE user_id = %s", (round(book.balance, 2), user_id))
@@ -570,11 +582,11 @@ def live_report(user_id: int) -> dict | None:
         equity.append((int(r["closed_at"].timestamp()), cash))
         trades.append({"side": r["side"], "units": r["units"], "entry_time": int(r["opened_at"].timestamp()),
                        "entry_price": r["entry_price"], "exit_time": int(r["closed_at"].timestamp()),
-                       "exit_price": r["exit_price"], "costs": round(paper.SPREAD * r["units"], 2), "swap": r["swap"],
+                       "exit_price": r["exit_price"], "costs": round(cfg.market.spread * r["units"], 2), "swap": r["swap"],
                        "pnl": r["pnl"], "stop_loss": r["stop_loss"], "exit_reason": r["close_reason"]})
     rep = build_report(trades, equity, capital)
     start = ag["started_at"] - timedelta(seconds=TF_SECONDS[cfg.tf] * WARMUP_BARS)
-    bars = bt.load_bars(cfg.tf, start.date(), None)
+    bars = bt.load_bars(cfg.tf, start.date(), None, cfg.symbol)
     live_bars = [b for b in bars if b["t"] >= ag["started_at"].timestamp() - TF_SECONDS[cfg.tf]]
     diag = diagnose(live_bars, trades, rep["equity"], cfg.strategy, cfg.stop_loss_pct, capital, _profile(user_id)) if closed else None
     # What the same settings did in a backtest over the agent's days, for comparison.
@@ -598,9 +610,10 @@ def state(user_id: int) -> dict:
         log_rows = c.execute("SELECT ts, kind, message FROM paper_agent_log WHERE user_id = %s ORDER BY id DESC LIMIT 60",
                              (user_id,)).fetchall()
         last_past = c.execute("SELECT result, created_at FROM agent_analyses WHERE user_id = %s", (user_id,)).fetchone()
-    out = {"agent": None, "log": log_rows, "live": None, "last_past_test": last_past, "price": paper.current_price()}
-    if ag:
-        cfg = AgentConfig(**ag["config"])
+    cfg = AgentConfig(**ag["config"]) if ag else None
+    out = {"agent": None, "log": log_rows, "live": None, "last_past_test": last_past,
+           "price": paper.current_price(cfg.symbol if cfg else config.SYMBOL)}
+    if ag and cfg:
         out["agent"] = {**{k: ag[k] for k in ("status", "started_at", "stopped_at", "last_bar", "signal", "blocked")},
                         "config": cfg.model_dump(), "label": cfg.label,
                         "next_check": (ag["last_bar"] + timedelta(seconds=2 * TF_SECONDS[cfg.tf])) if ag["last_bar"] else None}
@@ -634,7 +647,7 @@ def start(cfg: AgentConfig, user: UserOut = Depends(current_user)):
                      ON CONFLICT (user_id) DO UPDATE SET config = EXCLUDED.config, status = 'running', started_at = now(),
                        stopped_at = NULL, last_bar = NULL, signal = 0, blocked = 0, position_id = NULL, note = ''""",
                   (user.id, Jsonb(cfg.model_dump())))
-        _log(c, user.id, "start", f"Started {cfg.label} on "
+        _log(c, user.id, "start", f"Started {cfg.label} on {cfg.market.name} "
                                   f"{'hourly' if cfg.tf == '1h' else 'daily'} candles, {cfg.size_pct:.0f}% of the account per "
                                   f"trade with a {cfg.stop_loss_pct}% stop.")
     return state(user.id)
@@ -652,11 +665,12 @@ def stop(body: StopIn, user: UserOut = Depends(current_user)):
             raise HTTPException(404, "The agent isn't running")
         msg = "Stopped the agent."
         if body.close_position:
-            acct, book, price = paper.sync(c, user.id)
+            m = AgentConfig(**ag["config"]).market
+            acct, book, price = paper.sync(c, user.id, m.symbol)
             mine = c.execute("SELECT id FROM paper_positions WHERE user_id = %s AND agent AND closed_at IS NULL", (user.id,)).fetchone()
             pos = next((p for p in book.positions if mine and p["id"] == mine["id"]), None)
             if pos and price and price["open"]:
-                row = book.close(pos, paper._exit_price(pos["side"], price["bid"]), datetime.now(timezone.utc), AGENT_KIND)
+                row = book.close(pos, paper._exit_price(pos["side"], price["bid"], m), datetime.now(timezone.utc), AGENT_KIND)
                 c.execute("UPDATE paper_accounts SET balance = %s WHERE user_id = %s", (round(book.balance, 2), user.id))
                 msg = f"Stopped the agent and closed its {pos['side']} position ({'+' if row['pnl'] >= 0 else '-'}${abs(row['pnl']):,.2f})."
             elif pos:

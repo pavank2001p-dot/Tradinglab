@@ -6,6 +6,8 @@ import EquityChart from "@/components/EquityChart";
 import Rich from "@/components/Rich";
 import SignInPrompt from "@/components/SignInPrompt";
 import { Empty, Icon, PageHeader } from "@/components/ui";
+import MarketPicker from "@/components/markets/MarketPicker";
+import { useMarket, useMarkets } from "@/lib/markets";
 import {
   api, ApiError, asStrategy, fmtPct, type AgentConfig, type AgentFix, type AgentState, type BriefStats, type Diagnosis, type PastTest, type SavedStrategy, type Strategy,
 } from "@/lib/api";
@@ -58,7 +60,7 @@ function WorstPeriod({ d }: { d: Diagnosis }) {
     <div className="rounded-2xl border border-border bg-surface p-4 text-sm">
       <h3 className="font-medium">Worst stretch: {w.from} to {w.to}</h3>
       <p className="mt-1 text-muted">
-        The account fell <b className="text-down">{Math.abs(w.depth_pct).toFixed(1)}%</b> from its peak while gold{" "}
+        The account fell <b className="text-down">{Math.abs(w.depth_pct).toFixed(1)}%</b> from its peak while the market{" "}
         {w.gold_move_pct == null ? "moved" : w.gold_move_pct >= 0 ? `rose ${w.gold_move_pct.toFixed(1)}%` : `fell ${Math.abs(w.gold_move_pct).toFixed(1)}%`}
         {w.market_label && <> in mostly {w.market_label}</>}. {w.losing_trades} of the {w.trades} trades that closed in it lost money
         {w.stop_outs ? `, ${w.stop_outs} of them at the stop loss` : ""}.
@@ -162,7 +164,7 @@ function Coach({ hasData }: { hasData: boolean }) {
       <h2 className="flex items-center gap-2 font-medium"><Icon name="assistant" className="h-4 w-4 text-gold" />AI coach</h2>
       <p className="mt-1 text-sm text-muted">
         Reads your latest past test and the agent&apos;s live results, then explains what went wrong and what the tested fixes changed.
-        Describe a situation to ask about it too, like &quot;gold drops 5% after a Fed meeting&quot;.
+        Describe a situation to ask about it too, like &quot;the market drops 5% after a Fed meeting&quot;.
       </p>
       <textarea value={situation} onChange={(e) => setSituation(e.target.value)} maxLength={1200} rows={2}
         placeholder="Optional: describe a situation or ask a question" className={`${input} mt-3 resize-y`} />
@@ -180,6 +182,7 @@ function Coach({ hasData }: { hasData: boolean }) {
 
 function LiveCard({ s, act, busy }: { s: AgentState; act: (fn: () => Promise<AgentState>) => void; busy: boolean }) {
   const [closeIt, setCloseIt] = useState(true);
+  const markets = useMarkets();
   const a = s.agent!;
   const live = s.live;
   const running = a.status === "running";
@@ -190,7 +193,7 @@ function LiveCard({ s, act, busy }: { s: AgentState; act: (fn: () => Promise<Age
         <div>
           <h2 className="flex items-center gap-2 font-medium">
             <span className={`h-2 w-2 rounded-full ${running ? "breathe bg-up" : "bg-muted"}`} />
-            {a.label} {running ? "is running on paper" : "is stopped"}
+            {a.label}{c.symbol ? ` on ${markets.find((m) => m.symbol === c.symbol)?.name ?? c.symbol}` : ""} {running ? "is running on paper" : "is stopped"}
           </h2>
           <p className="mt-0.5 text-xs text-muted">
             {c.tf === "1h" ? "Hourly" : "Daily"} candles · {c.direction === "both" ? "long and short" : c.direction.replace("_", " ")} ·{" "}
@@ -253,6 +256,7 @@ export default function AgentPage() {
   const [error, setError] = useState<string | null>(null);
   const results = useRef<HTMLDivElement>(null);
 
+  const [market, setSymbol, markets] = useMarket();
   const refresh = useCallback(() => api.agent().then(setState, () => {}), []);
 
   useEffect(() => {
@@ -305,13 +309,14 @@ export default function AgentPage() {
       setBusy(false);
     }
   }
-  const testPast = () => run(() => api.agentPast(form), (p) => {
+  const testPast = () => run(() => api.agentPast({ ...form, symbol: market.symbol }), (p) => {
     setPast(p);
     setTimeout(() => results.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
   });
   const act = (fn: () => Promise<AgentState>) => run(fn, setState);
-  const { years, ...config } = form;
+  const { years, ...rest } = form;
   void years;
+  const config: AgentConfig = { ...rest, symbol: market.symbol };
 
   function use(c: AgentConfig) {
     setForm({ ...form!, ...c });
@@ -326,13 +331,17 @@ export default function AgentPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
       <PageHeader icon="assistant" title="Strategy agent"
-        subtitle="Tests a strategy on past gold prices, explains what went wrong and tries fixes, then trades it for you automatically on your paper account."
+        subtitle="Tests a strategy on the past prices of any market, explains what went wrong and tries fixes, then trades it for you automatically on your paper account."
         right={<Link href="/paper" className="hidden rounded-lg border border-border px-3 py-1.5 text-sm hover:border-muted sm:block">Back to paper trading</Link>} />
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[320px_1fr]">
         <aside className="space-y-4">
           <div className="space-y-3 rounded-2xl border border-border bg-surface p-4">
             <h2 className="font-medium">Setup</h2>
+            <div className="text-sm">
+              <span className="text-muted">Market</span>
+              <MarketPicker className="mt-1" market={market} markets={markets} onChange={setSymbol} />
+            </div>
             <Field label="Strategy">
               <select className={input} value={selected} onChange={(e) => {
                 const m = mine.find((x) => `custom:${x.id}` === e.target.value);

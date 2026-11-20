@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, ValidationError
 
 from . import config, db
+from . import instruments
 from .auth import UserOut, current_user
 from .backtest import KINDS, STRATEGIES, BacktestIn, load_bars, run
 from .custom import Rules, describe
@@ -39,6 +40,7 @@ CACHE_SECONDS = 6 * 3600
 
 
 class PlanIn(BaseModel):
+    symbol: str = Field(config.SYMBOL, description="Market to search on (see /prices/markets)")
     profile: Literal["conservative", "moderate", "aggressive"] | None = None
     tf: Literal["1d", "1h"] = "1d"
     years: int = 10
@@ -63,10 +65,10 @@ def _variants(key: str) -> list[dict]:
 
 
 def _cfg(key: str, params: dict, tf: str, direction: str, size_pct: float, stop: float | None,
-         rules: Rules | None = None) -> BacktestIn | None:
+         rules: Rules | None = None, symbol: str = config.SYMBOL) -> BacktestIn | None:
     try:
-        return BacktestIn(strategy=key, params=params, rules=rules, tf=tf, start=date(2000, 1, 1), direction=direction,
-                          capital=BASE_CAPITAL, size_pct=size_pct, stop_loss_pct=stop)
+        return BacktestIn(strategy=key, symbol=symbol, params=params, rules=rules, tf=tf, start=date(2000, 1, 1),
+                          direction=direction, capital=BASE_CAPITAL, size_pct=size_pct, stop_loss_pct=stop)
     except ValidationError:
         return None
 
@@ -98,11 +100,11 @@ def _sized_run(cfg: BacktestIn, bars: list[dict], profile: str) -> tuple[Backtes
     return cfg, rep, fit
 
 
-def _window(tf: str, years: int) -> tuple[list[dict], list[dict], list[dict]]:
+def _window(tf: str, years: int, symbol: str = config.SYMBOL) -> tuple[list[dict], list[dict], list[dict]]:
     start = date.today() - timedelta(days=round(years * 365.25))
-    bars = load_bars(tf, start, None)
+    bars = load_bars(tf, start, None, symbol)
     if len(bars) < 300:
-        raise HTTPException(422, "Not enough price history for that period yet")
+        raise HTTPException(422, "Not enough price history for that period on this market yet. Try fewer years.")
     cut = int(len(bars) * IN_SAMPLE)
     return bars, bars[:cut], bars[cut:]
 
@@ -153,15 +155,16 @@ def _size_for(profile: str, stop: float, max_lev: float) -> float:
     return min(PROFILES[profile]["max_risk_per_trade_pct"] / stop, max_lev) * 100
 
 
-def _search(profile: str, tf: str, years: int, style: str, direction: str, max_lev: float) -> dict:
-    bars, ins, outs = _window(tf, years)
+def _search(profile: str, tf: str, years: int, style: str, direction: str, max_lev: float,
+            symbol: str = config.SYMBOL) -> dict:
+    bars, ins, outs = _window(tf, years, symbol)
     stops = _stops(profile, tf)
     cands: dict[str, list[BacktestIn]] = {}
     for key, spec in STRATEGIES.items():
         if spec["kind"] == "benchmark" or (style != "any" and spec["kind"] != style):
             continue
         cands[key] = [c for params in _variants(key) for stop in stops
-                      if (c := _cfg(key, params, tf, direction, _size_for(profile, stop, max_lev), stop)) is not None]
+                      if (c := _cfg(key, params, tf, direction, _size_for(profile, stop, max_lev), stop, None, symbol)) is not None]
     results = []
     for r in _pick(cands, ins, outs, profile):
         spec = STRATEGIES[r["strategy"]]
@@ -169,8 +172,8 @@ def _search(profile: str, tf: str, years: int, style: str, direction: str, max_l
                         "summary": spec["summary"], "param_labels": {p["key"]: p["label"] for p in spec["params"]}})
     _sort(results)
 
-    # Simply owning gold with no leverage, as a yardstick.
-    hold_cfg = _cfg("buy_and_hold", {}, tf, "long_only", 100, None)
+    # Simply owning the market with no leverage, as a yardstick.
+    hold_cfg = _cfg("buy_and_hold", {}, tf, "long_only", 100, None, None, symbol)
     hold_in, hold_out = run(hold_cfg, ins), run(hold_cfg, outs)
     hold_fit = assess(hold_in["trades"], hold_in["stats"], BASE_CAPITAL, profile)
     hold_out_fit = assess(hold_out["trades"], hold_out["stats"], BASE_CAPITAL, profile)
@@ -189,17 +192,18 @@ def _search(profile: str, tf: str, years: int, style: str, direction: str, max_l
     }
 
 
-def _custom(user_id: int, profile: str, tf: str, years: int, direction: str, max_lev: float) -> tuple[list[dict], int]:
+def _custom(user_id: int, profile: str, tf: str, years: int, direction: str, max_lev: float,
+            symbol: str = config.SYMBOL) -> tuple[list[dict], int]:
     """The user's own saved strategies, tried with the same stops and sizing (their rules stay as written)."""
     with db.conn() as c:
         rows = c.execute("SELECT id, rules FROM custom_strategies WHERE user_id = %s ORDER BY updated_at DESC LIMIT %s",
                          (user_id, MAX_CUSTOM)).fetchall()
     if not rows:
         return [], 0
-    _, ins, outs = _window(tf, years)
+    _, ins, outs = _window(tf, years, symbol)
     stops = _stops(profile, tf)
     saved = {f"custom:{r['id']}": (r["id"], Rules(**r["rules"])) for r in rows}
-    cands = {k: [c for stop in stops if (c := _cfg("custom", {}, tf, direction, _size_for(profile, stop, max_lev), stop, rules)) is not None]
+    cands = {k: [c for stop in stops if (c := _cfg("custom", {}, tf, direction, _size_for(profile, stop, max_lev), stop, rules, symbol)) is not None]
              for k, (_, rules) in saved.items()}
     out = []
     for r in _pick(cands, ins, outs, profile):
@@ -217,27 +221,33 @@ def match(body: PlanIn, user_id: int) -> dict:
     if body.years not in YEARS[body.tf]:
         raise HTTPException(422, f"Choose one of {', '.join(map(str, YEARS[body.tf]))} years for these candles")
     limits = PROFILES[profile]
-    max_lev = min(body.max_leverage or limits["max_leverage"], limits["max_leverage"])
+    try:
+        m = instruments.get(body.symbol)
+    except KeyError:
+        raise HTTPException(404, f"Unknown market {body.symbol}")
+    # The market's own leverage cap (a broker's per-class limit) applies too.
+    max_lev = min(body.max_leverage or limits["max_leverage"], limits["max_leverage"], m.max_leverage)
 
-    key = (profile, body.tf, body.years, body.style, body.direction, max_lev, date.today())
+    key = (m.symbol, profile, body.tf, body.years, body.style, body.direction, max_lev, date.today())
     hit = _cache.get(key)
     if hit and time.time() - hit[0] < CACHE_SECONDS:
         out = hit[1]
     else:
-        out = _search(profile, body.tf, body.years, body.style, body.direction, max_lev)
+        out = _search(profile, body.tf, body.years, body.style, body.direction, max_lev, m.symbol)
         _cache[key] = (time.time(), out)
         for k in [k for k, (t, _) in _cache.items() if time.time() - t > CACHE_SECONDS]:
             _cache.pop(k, None)
     if body.style == "any":
         # Saved custom strategies change whenever the user edits them, so they are never cached.
-        mine, tried = _custom(user_id, profile, body.tf, body.years, body.direction, max_lev)
+        mine, tried = _custom(user_id, profile, body.tf, body.years, body.direction, max_lev, m.symbol)
         if mine:
             results = out["results"] + mine
             _sort(results)
             out = {**out, "results": results, "tried": out["tried"] + tried}
 
-    # Sizes in ounces for the user's own capital, at the price where each test period starts.
+    # Sizes in the market's units for the user's own capital, at the price where each test period starts.
     return {
+        "symbol": m.symbol,
         "profile": profile,
         "profile_label": limits["label"],
         "limits": {k: limits[k] for k in ("max_risk_per_trade_pct", "max_drawdown_pct", "max_leverage")},

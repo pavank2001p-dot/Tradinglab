@@ -1,4 +1,6 @@
-"""Daily Candle: one real moment from gold's history each day, the same for everyone.
+"""Daily Candle: one real moment from a market's history each day, the same for everyone.
+
+The market rotates day by day (gold, forex, indices, oil, crypto...) and is revealed with the answer.
 
 The chart stops at an hour where the next twelve hours moved a lot. The date and the price level are
 hidden (prices are shown relative to the last close, which is 100), so nobody can look the answer up.
@@ -17,6 +19,7 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException
 from pydantic import BaseModel
 
 from . import config, db, prices
+from . import instruments as ins
 from .auth import UserOut, current_user
 
 router = APIRouter(prefix="/daily", tags=["daily"])
@@ -27,6 +30,10 @@ HORIZON = 12          # hours revealed after the choice
 WAIT_BAND = 0.2       # a move smaller than this (in %) means waiting was the right call
 TRIES = 40            # candidate moments looked at when the day's moment is chosen
 FIRST_DAY = date(2026, 11, 1)
+# Markets the Daily Candle rotates through. US stocks are left out: their six-and-a-half-hour sessions can't
+# hold a twelve-hour reveal.
+ROTATION = ("XAUUSD", "EURUSD", "USA500IDXUSD", "BTCUSD", "LIGHTCMDUSD", "GBPUSD", "USATECHIDXUSD", "XAGUSD",
+            "ETHUSD", "USA30IDXUSD", "AUDUSD", "BRENTCMDUSD")
 
 Choice = Literal["buy", "sell", "wait"]
 
@@ -99,10 +106,17 @@ def drama(context: list[dict], future: list[dict]) -> float:
 # Choosing the day's moment
 # ---------------------------------------------------------------------------
 
-def _window(t: int) -> tuple[list[dict], list[dict]]:
-    context = prices.candles(tf=TF, start=None, end=t + 3600, limit=CONTEXT)["bars"]
-    future = prices.candles(tf=TF, start=t + 3600, end=t + 3600 * 40, limit=HORIZON)["bars"]
+def _window(t: int, symbol: str = config.SYMBOL) -> tuple[list[dict], list[dict]]:
+    context = prices.candles(tf=TF, start=None, end=t + 3600, limit=CONTEXT, symbol=symbol)["bars"]
+    future = prices.candles(tf=TF, start=t + 3600, end=t + 3600 * 40, limit=HORIZON, symbol=symbol)["bars"]
     return context, future
+
+
+def market_of(day: date) -> list[str]:
+    """The day's market first, then the rest of the rotation to fall back on (only enabled markets)."""
+    pool = [s for s in ROTATION if s in ins.BY_SYMBOL] or [config.SYMBOL]
+    k = (day - FIRST_DAY).days % len(pool)
+    return pool[k:] + pool[:k]
 
 
 def _usable(t: int, context: list[dict], future: list[dict]) -> bool:
@@ -110,11 +124,12 @@ def _usable(t: int, context: list[dict], future: list[dict]) -> bool:
             and future[-1]["t"] - t <= 3600 * (HORIZON + 4))  # no weekend inside the reveal
 
 
-def pick(day: date) -> int | None:
+def pick(day: date, symbol: str = config.SYMBOL) -> int | None:
     """The hour whose next twelve hours moved most, out of TRIES seeded guesses across the hourly history."""
+    m = ins.BY_SYMBOL.get(symbol, ins.GOLD)
     with db.conn() as c:
         r = c.execute("SELECT min(ts) AS a, max(ts) AS b FROM candles WHERE symbol = %s AND tf = %s",
-                      (config.SYMBOL, TF)).fetchone()
+                      (m.symbol, TF)).fetchone()
     if not r or r["a"] is None:
         return None
     first = int(r["a"].timestamp()) + 3600 * (CONTEXT + 24)
@@ -128,9 +143,9 @@ def pick(day: date) -> int | None:
     for _ in range(TRIES):
         t = rnd.randrange(first, last) // 3600 * 3600
         d = datetime.fromtimestamp(t, tz=timezone.utc)
-        if d.weekday() >= 5 or not 1 <= d.hour <= 18:
+        if (d.weekday() >= 5 and not m.weekends) or not 1 <= d.hour <= 18:
             continue
-        context, future = _window(t)
+        context, future = _window(t, m.symbol)
         if not _usable(t, context, future):
             continue
         s = drama(context, future)
@@ -139,20 +154,26 @@ def pick(day: date) -> int | None:
     return best
 
 
-def moment(day: date) -> int:
+def moment(day: date) -> tuple[int, str]:
+    """The day's frozen hour and its market, chosen once and stored."""
     with db.conn() as c:
-        row = c.execute("SELECT frozen_ts FROM daily_candles WHERE day = %s", (day,)).fetchone()
+        row = c.execute("SELECT frozen_ts, symbol FROM daily_candles WHERE day = %s", (day,)).fetchone()
     if row:
-        return row["frozen_ts"]
-    t = pick(day)
+        return row["frozen_ts"], row["symbol"]
+    t, symbol = None, config.SYMBOL
+    for symbol in market_of(day):
+        t = pick(day, symbol)
+        if t is not None:
+            break
     if t is None:
         raise HTTPException(503, "There isn't enough price history for a Daily Candle yet")
     with db.conn() as c:
-        return c.execute(
+        row = c.execute(
             "INSERT INTO daily_candles (day, symbol, frozen_ts) VALUES (%s, %s, %s) "
-            "ON CONFLICT (day) DO UPDATE SET day = EXCLUDED.day RETURNING frozen_ts",
-            (day, config.SYMBOL, t),
-        ).fetchone()["frozen_ts"]
+            "ON CONFLICT (day) DO UPDATE SET day = EXCLUDED.day RETURNING frozen_ts, symbol",
+            (day, symbol, t),
+        ).fetchone()
+    return row["frozen_ts"], row["symbol"]
 
 
 # ---------------------------------------------------------------------------
@@ -178,12 +199,13 @@ def _record(c, user_id: int) -> dict:
             "right": sum(1 for r in rows if r["correct"])}
 
 
-def _result(day: date, t: int, choice: str, user: UserOut | None) -> dict:
-    context, future = _window(t)
+def _result(day: date, t: int, symbol: str, choice: str, user: UserOut | None) -> dict:
+    context, future = _window(t, symbol)
     base = context[-1]["c"]
     v = verdict(base, future)
+    m = ins.BY_SYMBOL.get(symbol) or next((i for i in ins.ALL if i.symbol == symbol), ins.GOLD)
     res = {"choice": choice, **outcome(choice, v), **v, "price": base, "at": t,
-           "future": normalize(future, base), "symbol": config.SYMBOL}
+           "future": normalize(future, base), "symbol": m.symbol, "market": m.name, "decimals": m.decimals}
     with db.conn() as c:
         res["crowd"] = _crowd(c, day)
         res["you"] = _record(c, user.id) if user else None
@@ -193,15 +215,15 @@ def _result(day: date, t: int, choice: str, user: UserOut | None) -> dict:
 @router.get("")
 def get_daily(user: UserOut | None = Depends(maybe_user)):
     day = today()
-    t = moment(day)
-    context, _ = _window(t)
+    t, symbol = moment(day)
+    context, _ = _window(t, symbol)
     played = None
     if user:
         with db.conn() as c:
             row = c.execute("SELECT choice FROM daily_candle_plays WHERE user_id = %s AND day = %s",
                             (user.id, day)).fetchone()
         if row:
-            played = _result(day, t, row["choice"], user)
+            played = _result(day, t, symbol, row["choice"], user)
     return {"day": day.isoformat(), "number": number(day), "tf": TF, "horizon": HORIZON,
             "bars": normalize(context, context[-1]["c"]), "played": played}
 
@@ -214,14 +236,14 @@ class PlayIn(BaseModel):
 def play(body: PlayIn, user: UserOut | None = Depends(maybe_user)):
     """Answers today's moment. A signed-in player's first answer is kept; asking again returns that one."""
     day = today()
-    t = moment(day)
+    t, symbol = moment(day)
     choice = body.choice
     if user:
-        context, future = _window(t)
+        context, future = _window(t, symbol)
         right = outcome(choice, verdict(context[-1]["c"], future))["right"]
         with db.conn() as c:
             c.execute("INSERT INTO daily_candle_plays (user_id, day, choice, correct) VALUES (%s, %s, %s, %s) "
                       "ON CONFLICT (user_id, day) DO NOTHING", (user.id, day, choice, right))
             choice = c.execute("SELECT choice FROM daily_candle_plays WHERE user_id = %s AND day = %s",
                                (user.id, day)).fetchone()["choice"]
-    return _result(day, t, choice, user)
+    return _result(day, t, symbol, choice, user)

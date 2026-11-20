@@ -82,13 +82,17 @@ function Crowd({ c, mine }: { c: DailyResult["crowd"]; mine: DailyChoice }) {
   );
 }
 
+/** The day's market in a sentence; it is only revealed with the answer. */
+const marketWord = (r: Pick<DailyResult, "symbol" | "market">) => (!r.market || r.symbol === "XAUUSD" ? "gold" : r.market);
+
 function story(r: DailyResult): string {
   const dir = r.move_pct >= 0 ? "rose" : "fell";
   const swing = r.move_pct >= 0 ? r.low_pct : r.high_pct;
   const shake = Math.abs(swing) >= 0.15
     ? ` On the way it ${swing < 0 ? "dipped" : "spiked"} ${pct(swing)} first, which would have tested a tight stop.`
     : " It went that way with barely a pullback.";
-  return `Over the next 12 hours gold ${dir} ${Math.abs(r.move_pct).toFixed(2)}%, from $${r.price.toFixed(2)} to $${r.end_price.toFixed(2)}.${shake}`;
+  const d = r.decimals ?? 2;
+  return `Over the next 12 hours ${marketWord(r)} ${dir} ${Math.abs(r.move_pct).toFixed(2)}%, from $${r.price.toFixed(d)} to $${r.end_price.toFixed(d)}.${shake}`;
 }
 
 function Result({ r, d }: { r: DailyResult; d: Daily }) {
@@ -129,21 +133,22 @@ function Result({ r, d }: { r: DailyResult; d: Daily }) {
         <ShareButton className="w-full" data={{
           kind: "Daily Candle",
           title: `Daily Candle #${d.number}: I chose ${LABEL[r.choice]}`,
-          subtitle: `${date}. Gold ${r.move_pct >= 0 ? "rose" : "fell"} ${Math.abs(r.move_pct).toFixed(2)}% in the next 12 hours.`,
+          subtitle: `${date}. ${r.market ?? "Gold"} ${r.move_pct >= 0 ? "rose" : "fell"} ${Math.abs(r.move_pct).toFixed(2)}% in the next 12 hours.`,
           stats: [
             { label: "My call", value: LABEL[r.choice] },
             { label: "Move", value: pct(r.move_pct), tone: r.move_pct >= 0 ? "up" : "down" },
             { label: "Best call", value: LABEL[r.best] },
           ],
           equity: [...d.bars, ...r.future].map((b) => b.c),
-          footnote: "One real moment of gold history a day, practised with no money at stake.",
+          footnote: "One real moment of market history a day, practised with no money at stake.",
         }} />
       </div>
     </div>
   );
 }
 
-/** One hidden moment of gold history a day: buy, sell or wait, then watch the next twelve hours. */
+/** One hidden moment of market history a day (the market rotates and is revealed with the answer): buy, sell or wait,
+ *  then watch the next twelve hours. */
 export default function DailyCandle() {
   const { user } = useUser();
   const [d, setD] = useState<Daily | null>(null);
@@ -198,7 +203,7 @@ export default function DailyCandle() {
         <div>
           <p className="text-xs uppercase tracking-wider text-gold">Daily Candle{d ? ` #${d.number}` : ""}</p>
           <h2 id="daily-candle-title" className="mt-1 text-xl font-bold">
-            {result ? "Here is what happened next" : "A real moment from gold's past. What do you do?"}
+            {result ? "Here is what happened next" : "A real moment from a market's past. Which market is part of the mystery. What do you do?"}
           </h2>
         </div>
         <p className="max-w-xs text-xs text-muted">
@@ -213,7 +218,7 @@ export default function DailyCandle() {
 
       {!result && (
         <div className="space-y-2">
-          <p className="text-sm text-muted">Hourly gold candles, the last three days. The shaded band is the next 12 hours.</p>
+          <p className="text-sm text-muted">Hourly {result ? `${marketWord(result)} ` : ""}candles, the last three days. The shaded band is the next 12 hours.</p>
           <div className="grid grid-cols-3 gap-2">
             {(["buy", "sell", "wait"] as DailyChoice[]).map((c) => (
               <button key={c} type="button" disabled={!d || busy} onClick={() => choose(c)}
