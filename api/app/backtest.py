@@ -9,8 +9,9 @@ Money is in US dollars: moves of a market quoted in another currency are convert
 import logging
 import math
 from collections import deque
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 from typing import Literal
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
@@ -757,12 +758,34 @@ def signals(strategy: str, p: dict, bars: list[dict], rules: Rules | None = None
 # ---------------------------------------------------------------------------
 
 
+# Day trading: the hours new trades may open, as (time zone, start, end) on the local clock.
+SESSIONS: dict[str, tuple[str, str, str]] = {
+    "asia": ("Asia/Tokyo", "09:00", "15:00"),
+    "london": ("Europe/London", "08:00", "16:30"),
+    "new_york": ("America/New_York", "09:30", "16:00"),
+    "overlap": ("America/New_York", "08:00", "12:00"),  # London and New York both open
+}
+SESSION_TZS = ("America/New_York", "Europe/London", "Asia/Tokyo", "UTC")
+# Candle length in seconds. 5m and 15m candles are built from stored minute bars, which the
+# day-trading markets keep for INTRADAY_DAYS and the rest for a couple of weeks.
+BAR_SECONDS = {"5m": 300, "15m": 900, "1h": 3600, "1d": 86400}
+INTRADAY = ("5m", "15m")
+
+
+def _hhmm(v: str) -> time:
+    try:
+        h, m = v.split(":")
+        return time(int(h), int(m))
+    except (ValueError, AttributeError):
+        raise ValueError(f"Times are written as HH:MM, like 09:30 (got {v!r})")
+
+
 class BacktestIn(BaseModel):
     strategy: Literal[tuple(STRATEGIES) + ("custom",)]  # type: ignore[valid-type]
     symbol: str = Field(config.SYMBOL, description="Market to test on (see /prices/markets)")
     params: dict[str, float] = {}
     rules: Rules | None = Field(None, description="The conditions of a custom strategy (strategy = custom)")
-    tf: Literal["1h", "1d"] = "1d"
+    tf: Literal["5m", "15m", "1h", "1d"] = "1d"
     start: date = date(2015, 1, 1)
     end: date | None = None
     direction: Literal["both", "long_only", "short_only"] = "both"
@@ -794,6 +817,20 @@ class BacktestIn(BaseModel):
         "Wider spreads at the rollover and around high-impact releases, and stops that slip past their price "
         "around releases (see app/fills.py). On by default, like the paper account, so a test is never kinder "
         "than trading the same rules on paper"))
+    # Day trading. All off by default, so tests saved before these existed run the same.
+    session: Literal["any", "asia", "london", "new_york", "overlap", "custom"] = Field("any", description=(
+        "Hours new trades may open: any time, a market session (Tokyo 09:00-15:00, London 08:00-16:30, New York "
+        "09:30-16:00, or the London and New York overlap 08:00-12:00 New York), or custom hours"))
+    session_start: str | None = Field(None, description="Custom session start, HH:MM on the session_tz clock")
+    session_end: str | None = Field(None, description="Custom session end, HH:MM (earlier than the start = runs past midnight)")
+    session_tz: Literal[SESSION_TZS] = "America/New_York"  # type: ignore[valid-type]
+    day_trade: bool = Field(False, description=(
+        "Close every trade the same day: at the session's end, or before the 17:00 New York rollover when trading "
+        "any time. Nothing is held overnight, so no swap is paid"))
+    max_trades_per_day: int | None = Field(None, ge=1, le=100, description="Most new trades in one trading day")
+    daily_loss_limit_pct: float | None = Field(None, gt=0, le=50, description=(
+        "Stop for the day once the account is down this % from the day's start (checked at each candle's close; "
+        "an open trade is closed)"))
 
     @property
     def market(self) -> ins.Instrument:
@@ -820,6 +857,15 @@ class BacktestIn(BaseModel):
                 setattr(self, key, m.cost(key))
         if self.slippage is None:
             self.slippage = m.market_slippage
+        if self.tf == "1d" and (self.session != "any" or self.day_trade):
+            raise ValueError("Trading hours and closing each day need intraday candles: 5 minutes, 15 minutes or hourly")
+        if self.session == "custom":
+            if not self.session_start or not self.session_end:
+                raise ValueError("Custom hours need a start and an end time")
+            if _hhmm(self.session_start) == _hhmm(self.session_end):
+                raise ValueError("The session's start and end must differ")
+        else:
+            self.session_start = self.session_end = None
         if self.strategy == "custom":
             if self.rules is None:
                 raise ValueError("A custom strategy needs its rules")
@@ -881,7 +927,8 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     base_sp, u = cfg.spread, cfg.units
     mkt = cfg.market
     sp, slip = base_sp, 0.0
-    bar_len = 3600 if cfg.tf == "1h" else 86400
+    bar_len = BAR_SECONDS[cfg.tf]
+    window = session_window(cfg)
     # The spread given is scaled the same way the market's own spread would be.
     scale = base_sp / cfg.market.spread if cfg.market.spread else 1.0
     slipped = 0
@@ -903,6 +950,10 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     equity: list[tuple[int, float]] = [(bars[0]["t"], cash)]
     in_market = 0
     wiped_out = False
+    day = None           # trading day of the current bar (17:00 New York to 17:00 New York)
+    day_trades = 0       # trades opened today
+    day_start = cash     # account value when today began
+    halted = False       # the daily loss limit was hit: no more trades today
 
     def close(t: int, bid: float, reason: str, slip_paid: float = 0.0, market: bool = True):
         nonlocal cash, pos, swap_acc
@@ -944,13 +995,22 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         b, prev = bars[i], bars[i - 1]
         if cond is not None and cond.on:
             t0 = datetime.fromtimestamp(b["t"], timezone.utc)
-            sp = cond.spread(cfg.market, t0) * scale if cfg.tf == "1h" else base_sp
+            sp = cond.spread(cfg.market, t0) * scale if cfg.tf != "1d" else base_sp
             slip = base_sp * fills.NEWS_SLIP_X if cond.news_between(t0, t0 + timedelta(seconds=bar_len), mkt) else 0.0
         # Overnight financing for each trading-day rollover the position was held through.
         if pos:
             nights = (trading_date(b["t"]) - trading_date(prev["t"])).days
             if nights > 0:
                 swap_acc += nights * u * cfg.swap_for(pos, entry)
+
+        today = trading_date(b["t"])
+        if today != day:
+            day, day_trades, halted = today, 0, False
+            day_start = equity[-1][1]
+        in_hours = window is None or in_session(b["t"], window)
+        # Day trading with set hours: the first candle after the session ends closes what is still open.
+        if pos and cfg.day_trade and not in_hours:
+            close(b["t"], b["o"], "session_end")
 
         want = target[i - 1] if target[i - 1] in allow else 0
         if blocked and want != blocked:
@@ -960,8 +1020,10 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         if pos != want:
             if pos:
                 close(b["t"], b["o"], "signal")
-            if want:
+            # New trades only inside the hours, under the day's trade count and before the daily loss limit.
+            if want and in_hours and not halted and (cfg.max_trades_per_day is None or day_trades < cfg.max_trades_per_day):
                 open_(b["t"], b["o"], want)
+                day_trades += 1
 
         # Stop-loss / take-profit inside the bar; if both could trigger, assume the stop hit first.
         if pos and (cfg.stop_loss_pct or cfg.take_profit_pct):
@@ -984,6 +1046,17 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
                     close(b["t"], min(b["o"] + sp, take) - sp, "take_profit", market=False)
             if not pos:
                 blocked = side
+
+        if cfg.daily_loss_limit_pct and not halted:
+            mark = b["c"] if pos == 1 else b["c"] + sp
+            value = cash + ((mark - entry) * u * pos * mkt.usd(mark) + swap_acc - entry_fee if pos else 0.0)
+            if value <= day_start * (1 - cfg.daily_loss_limit_pct / 100):
+                halted = True
+                if pos:
+                    close(b["t"], b["c"], "daily_loss_limit")
+        # Day trading at any hour: flat on the last candle before the trading day rolls over.
+        if pos and cfg.day_trade and window is None and (i + 1 == len(bars) or trading_date(bars[i + 1]["t"]) != today):
+            close(b["t"], b["c"], "session_end")
 
         if pos:
             in_market += 1
@@ -1013,6 +1086,8 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     if cond is not None and cond.on:
         rep["stats"]["slipped_stops"] = slipped
     rep["period"] = {"start": bars[0]["t"], "end": bars[-1]["t"]}
+    if cfg.tf != "1d":
+        rep["days"] = day_stats(trades)
     if not checks:
         return rep
     cut = robust.cut_index(len(bars), cfg.holdout_pct)
@@ -1021,15 +1096,57 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     return rep
 
 
+def session_window(cfg: BacktestIn) -> tuple[ZoneInfo, time, time] | None:
+    """The hours new trades may open, or None for any time."""
+    if cfg.session == "any":
+        return None
+    tz, a, b = SESSIONS[cfg.session] if cfg.session != "custom" else (cfg.session_tz, cfg.session_start, cfg.session_end)
+    return ZoneInfo(tz), _hhmm(a), _hhmm(b)
+
+
+def in_session(t: int, window: tuple[ZoneInfo, time, time]) -> bool:
+    """Whether a candle opening at `t` starts inside the window (which may run past midnight)."""
+    tz, a, b = window
+    local = datetime.fromtimestamp(t, tz).time()
+    return a <= local < b if a < b else local >= a or local < b
+
+
+def day_stats(trades: list[dict]) -> dict:
+    """Results by trading day (the day each trade closed), for day traders: how many days were traded, the
+    share that ended up, the best and worst day and the trades per day."""
+    by_day: dict[date, list[float]] = {}
+    for t in trades:
+        by_day.setdefault(trading_date(t["exit_time"]), []).append(t["pnl"])
+    totals = [sum(v) for v in by_day.values()]
+    if not totals:
+        return {"traded": 0, "green_pct": None, "best": None, "worst": None, "avg_trades": None, "avg_day": None}
+    return {
+        "traded": len(totals),
+        "green_pct": round(sum(1 for x in totals if x > 0) / len(totals) * 100, 1),
+        "best": round(max(totals), 2),
+        "worst": round(min(totals), 2),
+        "avg_trades": round(len(trades) / len(totals), 2),
+        "avg_day": round(sum(totals) / len(totals), 2),
+    }
+
+
 def load_bars(tf: str, start: date, end: date | None, symbol: str = config.SYMBOL) -> list[dict]:
+    """Stored candles in time order. 5m and 15m candles are built from minute bars in fixed UTC slots."""
     s = datetime(start.year, start.month, start.day, tzinfo=timezone.utc)
-    sql = "SELECT extract(epoch FROM ts)::bigint AS t, open AS o, high AS h, low AS l, close AS c FROM candles WHERE symbol = %s AND tf = %s AND ts >= %s"
-    args: list = [symbol, tf, s]
+    where = "symbol = %s AND tf = %s AND ts >= %s"
+    args: list = [symbol, "1m" if tf in INTRADAY else tf, s]
     if end:
-        sql += " AND ts < %s"
+        where += " AND ts < %s"
         args.append(datetime(end.year, end.month, end.day, tzinfo=timezone.utc))
+    if tf in INTRADAY:
+        n = BAR_SECONDS[tf]
+        sql = (f"SELECT (floor(extract(epoch FROM ts) / {n}) * {n})::bigint AS t, (array_agg(open ORDER BY ts))[1] AS o, "
+               "max(high) AS h, min(low) AS l, (array_agg(close ORDER BY ts DESC))[1] AS c "
+               f"FROM candles WHERE {where} GROUP BY 1 ORDER BY 1")
+    else:
+        sql = f"SELECT extract(epoch FROM ts)::bigint AS t, open AS o, high AS h, low AS l, close AS c FROM candles WHERE {where} ORDER BY ts"
     with db.conn() as c:
-        return c.execute(sql + " ORDER BY ts", args).fetchall()
+        return c.execute(sql, args).fetchall()
 
 
 # ---------------------------------------------------------------------------

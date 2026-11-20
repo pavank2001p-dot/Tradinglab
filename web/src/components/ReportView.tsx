@@ -10,6 +10,8 @@ const REASONS: Record<string, string> = {
   stop_loss: "Stop loss",
   take_profit: "Take profit",
   end_of_test: "End of test",
+  session_end: "Session end",
+  daily_loss_limit: "Daily loss limit",
   account_wiped_out: "Account wiped out",
   manual: "Closed by you",
   partial: "Part closed",

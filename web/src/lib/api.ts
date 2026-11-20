@@ -1,6 +1,8 @@
 export type User = { id: number; email: string; name: string; email_verified: boolean; has_password: boolean; google: boolean };
 export type Bar = { t: number; o: number; h: number; l: number; c: number; v: number };
 export type Timeframe = "1h" | "1d";
+/** Backtest candles: 5- and 15-minute candles are built from minute bars, kept for months on the day-trading markets. */
+export type BacktestTf = "5m" | "15m" | Timeframe;
 export type ChartTf = "1s" | "5s" | "15s" | "30s" | "1m" | "5m" | "15m" | "30m" | "1h" | "4h" | "1d" | "1w" | "1mo";
 export type LiveQuote = { price: number | null; t: number | null; age_seconds: number | null; connected: boolean; configured: boolean };
 export type Summary = {
@@ -22,6 +24,8 @@ export type Market = {
   default_units: number; spread: number; max_leverage: number; hours: string; open_now: boolean; live: boolean;
   swap_long: number | null; swap_short: number | null; swap_long_pct: number; swap_short_pct: number;
   price: number | null; as_of: number | null; has_seconds: boolean; has_history: boolean;
+  /** The first day with daily prices and with minute prices (for 5- and 15-minute backtests), or null. */
+  history_from?: string | null; minutes_from?: string | null;
   /** Smallest price step, its value in USD on one lot, and whether the market trades at weekends (crypto). */
   tick?: number; tick_value?: number; weekends?: boolean;
   /** Sector, region or kind inside the asset class ("Technology", "Majors", "Europe"), short code and search words. */
@@ -196,7 +200,7 @@ export type BacktestParams = {
   symbol?: string;
   params: Record<string, number>;
   rules?: Rules | null;
-  tf: Timeframe;
+  tf: BacktestTf;
   start: string;
   end?: string | null;
   direction: "both" | "long_only" | "short_only";
@@ -217,9 +221,20 @@ export type BacktestParams = {
   slippage?: number | null;
   /** The last part of the period, in %, reported on its own as data the strategy wasn't tuned on. */
   holdout_pct?: number;
+  /** Day trading: the hours new trades may open, closing everything the same day, and daily limits. */
+  session?: TradingHours;
+  session_start?: string | null;
+  session_end?: string | null;
+  session_tz?: "America/New_York" | "Europe/London" | "Asia/Tokyo" | "UTC";
+  day_trade?: boolean;
+  max_trades_per_day?: number | null;
+  daily_loss_limit_pct?: number | null;
 };
+export type TradingHours = "any" | "asia" | "london" | "new_york" | "overlap" | "custom";
+/** Results by trading day, for intraday backtests. */
+export type DayStats = { traded: number; green_pct: number | null; best: number | null; worst: number | null; avg_trades: number | null; avg_day: number | null };
 
-export type Backtest = Report & { id: number; created_at: string; params: BacktestParams; period?: { start: number; end: number } };
+export type Backtest = Report & { id: number; created_at: string; params: BacktestParams; period?: { start: number; end: number }; days?: DayStats };
 export type BacktestSummary = { id: number; created_at: string; params: BacktestParams; stats: Stats };
 
 export type Trade = {

@@ -34,7 +34,13 @@ def markets():
             """SELECT s.symbol, l.close, l.ts FROM unnest(%s::text[]) AS s(symbol)
                CROSS JOIN LATERAL (SELECT close, ts FROM candles WHERE symbol = s.symbol AND tf = '1h'
                                    ORDER BY ts DESC LIMIT 1) l""", (syms,)).fetchall()
+        # How far back each market's prices go: the first daily bar, and the first minute bar (day trading).
+        firsts = c.execute(
+            """SELECT s.symbol, (SELECT min(ts) FROM candles WHERE symbol = s.symbol AND tf = '1d') AS d,
+                      (SELECT min(ts) FROM candles WHERE symbol = s.symbol AND tf = '1m') AS m
+               FROM unnest(%s::text[]) AS s(symbol)""", (syms,)).fetchall()
     last = {r["symbol"]: r for r in rows}
+    first = {r["symbol"]: r for r in firsts}
     gone = ingest.unavailable_symbols()
     out = []
     for i in ins.ENABLED:
@@ -45,8 +51,14 @@ def markets():
         out.append({**i.public(), "price": r["close"] if r else None,
                     "as_of": int(r["ts"].timestamp()) if r else None,
                     "has_seconds": i.symbol in config.SECOND_SYMBOLS,
-                    "has_history": i.symbol == ins.GOLD.symbol, "status": status})
+                    "has_history": i.symbol == ins.GOLD.symbol, "status": status,
+                    "history_from": _day(first.get(i.symbol, {}).get("d")),
+                    "minutes_from": _day(first.get(i.symbol, {}).get("m"))})
     return {"default": ins.DEFAULT, "classes": ins.CLASSES, "markets": out}
+
+
+def _day(ts: datetime | None) -> str | None:
+    return ts.date().isoformat() if ts else None
 
 
 @router.post("/open")

@@ -27,9 +27,18 @@ MINUTE_DAYS = int(os.getenv("MINUTE_DAYS", "60"))
 # Markets other than gold keep fewer minute bars: they take most of the database (one row a minute each).
 MARKET_MINUTE_DAYS = int(os.getenv("MARKET_MINUTE_DAYS", "14"))
 SECOND_DAYS = int(os.getenv("SECOND_DAYS", "2"))
-# Markets other than gold: hourly history from this date (their feed mostly starts around 2017
-# for stocks), and which symbols also keep one-second bars (they take the most space).
-MARKET_HISTORY_SINCE = date.fromisoformat(os.getenv("MARKET_HISTORY_SINCE", "2015-01-01"))
+# Markets other than gold: hourly history from this date. The feed starts each market at a different
+# point (2003 for the main currency pairs, around 2012 to 2017 for indices, stocks and crypto); months
+# before that are skipped, so asking for more than exists costs only a few empty requests. Markets
+# loaded before this setting changed are extended back once (see app.ingest.extend_history).
+MARKET_HISTORY_SINCE = date.fromisoformat(os.getenv("MARKET_HISTORY_SINCE", "2003-05-01"))
+# Day trading: these markets keep INTRADAY_DAYS of minute bars (instead of MINUTE_DAYS for gold and
+# MARKET_MINUTE_DAYS for the rest), so 5- and 15-minute backtests have months to work with. Each
+# market adds roughly 1,400 rows a day (about 50 MB a year), so keep the list short.
+INTRADAY_SYMBOLS = {s.strip().upper() for s in os.getenv(
+    "INTRADAY_SYMBOLS", "XAUUSD,EURUSD,GBPUSD,USDJPY,USA500IDXUSD,USATECHIDXUSD,BTCUSD").split(",") if s.strip()}
+INTRADAY_DAYS = int(os.getenv("INTRADAY_DAYS", "180"))
+# Which symbols also keep one-second bars (they take the most space).
 SECOND_SYMBOLS = {s.strip().upper() for s in os.getenv("SECOND_SYMBOLS", "XAUUSD").split(",") if s.strip()}
 
 # Week 3: news and calendar. Both features stay quiet (empty, no errors) until keys are set.

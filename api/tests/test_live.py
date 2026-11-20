@@ -74,6 +74,7 @@ def test_other_markets_keep_fewer_minute_bars(client, monkeypatch):
     starts = {}
     monkeypatch.setattr(config, "MINUTE_DAYS", 60)
     monkeypatch.setattr(config, "MARKET_MINUTE_DAYS", 14)
+    monkeypatch.setattr(config, "INTRADAY_SYMBOLS", set())
     monkeypatch.setattr(ingest, "dukascopy_minutes", lambda s, e, i=None: starts.setdefault(i.symbol, s) and iter([]))
     monkeypatch.setattr(ingest, "dukascopy_seconds", lambda s, e, i=None: iter([]))
     other = next(i for i in instruments.ENABLED if i.symbol != ingest.GOLD.symbol)
