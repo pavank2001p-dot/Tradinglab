@@ -80,9 +80,30 @@ def test_backtest_realistic_fills_cost_more_around_news():
         bars.append({"t": t0 + i * 3600, "o": px, "h": px + 3, "l": px - 3, "c": px})
     cfg = backtest.BacktestIn(strategy="ma_cross", params={"fast": 3, "slow": 6}, tf="1h", start=date(2026, 3, 9),
                               stop_loss_pct=0.2)
-    plain = backtest.run(cfg, bars)
+    plain = backtest.run(cfg.model_copy(update={"realistic_fills": False}), bars)
     events = [datetime.fromtimestamp(b["t"], timezone.utc) + timedelta(minutes=10) for b in bars[::3]]
     real = backtest.run(cfg, bars, fills.Conditions(events))
     assert real["stats"]["slipped_stops"] > 0
     assert real["stats"]["net_profit"] < plain["stats"]["net_profit"]
     assert "slipped_stops" not in plain["stats"]
+
+
+def test_backtest_loads_realistic_fills_by_default(client):
+    """Callers that don't pass release times (the builder preview, the sweep, the agent) still get them."""
+    t0 = int(datetime(2026, 3, 9, tzinfo=timezone.utc).timestamp())
+    bars = []
+    for i in range(300):
+        px = 2000 + (10 if (i // 5) % 2 else -10) + i * 0.01
+        bars.append({"t": t0 + i * 3600, "o": px, "h": px + 3, "l": px - 3, "c": px})
+    with db.conn() as c:
+        for b in bars[::3]:
+            c.execute("INSERT INTO events (ts, title, impact, source) VALUES (%s, 'CPI m/m', 'High', 't')",
+                      (datetime.fromtimestamp(b["t"], timezone.utc) + timedelta(minutes=10),))
+    cfg = backtest.BacktestIn(strategy="ma_cross", params={"fast": 3, "slow": 6}, tf="1h", start=date(2026, 3, 9),
+                              stop_loss_pct=0.2)
+    assert cfg.realistic_fills
+    real = backtest.run(cfg, bars)
+    plain = backtest.run(cfg.model_copy(update={"realistic_fills": False}), bars)
+    assert real["stats"]["slipped_stops"] > 0
+    assert real["stats"]["total_costs"] > plain["stats"]["total_costs"]
+    assert real["stats"]["net_profit"] < plain["stats"]["net_profit"]
