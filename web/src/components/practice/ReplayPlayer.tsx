@@ -6,7 +6,7 @@ import {
   type IChartApi, type IPriceLine, type ISeriesApi, type ISeriesMarkersPluginApi, type SeriesMarker, type Time, type UTCTimestamp,
 } from "lightweight-charts";
 import { fmtUsd, type Market, type ReplayBar, type ReplaySettled, type ReplayTradeIn } from "@/lib/api";
-import { fmtMarketPrice, GOLD, unitsLabel } from "@/lib/markets";
+import { fmtMarketPrice, GOLD, toUsd, unitsLabel } from "@/lib/markets";
 import { hits, settle } from "@/lib/replay";
 import { useThemeKey } from "@/lib/theme";
 import { toast } from "../Toaster";
@@ -133,7 +133,8 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
   const i = k - 1; // index of the bar on screen
   const price = bars[i].c;
   const cash = balance + done.reduce((s, t) => s + t.pnl, 0);
-  const openPnl = pos ? (price - bars[pos.entry_bar].c) * pos.units * (pos.side === "long" ? 1 : -1) : 0;
+  const fx = toUsd(m, price); // dollars per unit of the market's quote currency
+  const openPnl = pos ? (price - bars[pos.entry_bar].c) * pos.units * (pos.side === "long" ? 1 : -1) * fx : 0;
   const equity = cash + openPnl;
   const wins = done.filter((t) => t.pnl > 0).length;
 
@@ -186,14 +187,14 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
   const finish = useCallback((openTrade: Open | null, closed: ReplaySettled[], at: number) => {
     setPlaying(false);
     let all = closed;
-    if (openTrade) all = [...closed, settle(bars, { ...openTrade, exit_bar: Math.max(at, openTrade.entry_bar) })];
+    if (openTrade) all = [...closed, settle(bars, { ...openTrade, exit_bar: Math.max(at, openTrade.entry_bar) }, m)];
     setPos(null);
     setDone(all);
     setFinished(true);
     setK(bars.length); // show the rest, so they can see what happened after
 
     onFinish(all.map(({ side, units, entry_bar, exit_bar, stop, target }) => ({ side, units, entry_bar, exit_bar, stop, target })), all);
-  }, [bars, onFinish]);
+  }, [bars, onFinish, m]);
 
   // Reveal the next bar, closing the open trade if the bar reaches its stop or target.
   const step = useCallback(() => {
@@ -202,7 +203,7 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
     const j = k;
     let closed = done, open = pos;
     if (pos && hits(bars[j], pos)) {
-      const s = settle(bars, { ...pos, exit_bar: j });
+      const s = settle(bars, { ...pos, exit_bar: j }, m);
       closed = [...done, s];
       open = null;
       setDone(closed);
@@ -222,21 +223,21 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
   const stop = stopDist.trim() ? Number(stopDist) : null;
   const target = targetDist.trim() ? Number(targetDist) : null;
   const oz = Number(units);
-  const risk = stop ? stop * oz : null;
+  const risk = stop ? stop * oz * fx : null;
   const tooRisky = riskPct != null && (risk == null || risk > (cash * riskPct) / 100 + 0.01);
   const sizeFor = useMemo(() => {
     const r = Number(riskInput);
     if (!stop || !(r > 0)) return null;
-    const byRisk = (cash * r) / 100 / stop;
-    const byMargin = (cash * leverage) / price;
+    const byRisk = (cash * r) / 100 / (stop * fx);
+    const byMargin = (cash * leverage) / (price * fx);
     return floorSize(Math.min(byRisk, byMargin), m);
-  }, [riskInput, stop, cash, leverage, price, m]);
+  }, [riskInput, stop, cash, leverage, price, m, fx]);
 
   function open(side: "long" | "short") {
     setError(null);
     if (pos || finished) return;
     if (!(oz > 0)) return setError(`Enter a size in ${unitsLabel(m)}.`);
-    if (oz * price > cash * leverage + 0.01) return setError(`That's more than 1:${leverage} leverage allows. Most you can open is ${floorSize(cash * leverage / price, m)} ${unit}.`);
+    if (oz * price * fx > cash * leverage + 0.01) return setError(`That's more than 1:${leverage} leverage allows. Most you can open is ${floorSize(cash * leverage / (price * fx), m)} ${unit}.`);
     if (stop != null && !(stop > 0)) return setError("A stop distance is a positive price distance.");
     if (riskPct != null && stop == null) return setError("Every challenge trade needs a stop.");
     if (riskPct != null && tooRisky) return setError(`That risks ${fmtUsd(risk)}, more than ${riskPct}% of your balance. Use a smaller size or a closer stop.`);
@@ -248,7 +249,7 @@ export default function ReplayPlayer({ bars, context, balance, leverage, riskPct
 
   function close() {
     if (!pos) return;
-    const s = settle(bars, { ...pos, exit_bar: i });
+    const s = settle(bars, { ...pos, exit_bar: i }, m);
     setDone([...done, s]);
     setPos(null);
     toast("Closed", { body: `${s.pnl >= 0 ? "+" : ""}${fmtUsd(s.pnl)}`, tone: s.pnl >= 0 ? "up" : "down" });

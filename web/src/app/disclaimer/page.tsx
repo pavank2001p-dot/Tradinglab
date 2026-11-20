@@ -8,7 +8,7 @@ export default function DisclaimerPage() {
 
       <h2 className="mt-8 text-base font-medium">Education, not advice</h2>
       <p className="mt-2">
-        Trading Lab is an educational tool for learning about markets: gold and other commodities, currencies, indices, stocks and crypto. Nothing on this site, including
+        Trading Lab is an educational tool for learning about markets: commodities, currencies, indices, stocks, ETFs and crypto. Nothing on this site, including
         backtests, news tags, risk-profile verdicts, suggested trade sizes and AI assistant answers, is investment,
         financial, tax or legal advice, or a recommendation to buy, sell or hold anything. Trading Lab is not a broker and
         is not authorised or regulated to give financial advice. Decide for yourself, and consider speaking to a
@@ -17,7 +17,7 @@ export default function DisclaimerPage() {
 
       <h2 className="mt-6 text-base font-medium">Trading carries a high risk of loss</h2>
       <p className="mt-2">
-        Trading gold with leverage (CFDs, spread bets, futures or margin forex) can lose you money quickly, and you can
+        Trading with leverage (CFDs, spread bets, futures or margin forex) can lose you money quickly, and you can
         lose more than you put in with some products. Only trade with money you can afford to lose.
       </p>
 

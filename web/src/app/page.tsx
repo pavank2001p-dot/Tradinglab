@@ -6,6 +6,7 @@ import CountUp from "@/components/home/CountUp";
 import HeroBoard from "@/components/home/HeroBoard";
 import HomeChart from "@/components/home/HomeChart";
 import MarketStrip from "@/components/home/MarketStrip";
+import MarketBrowser from "@/components/markets/MarketBrowser";
 import Showcase from "@/components/home/Showcase";
 import Spotlight from "@/components/home/Spotlight";
 import { Icon } from "@/components/ui";
@@ -66,7 +67,7 @@ export default function Home() {
               before you risk a&nbsp;cent.
             </h1>
             <p className="rise-in mt-7 max-w-xl text-lg leading-relaxed text-muted [animation-delay:160ms]">
-              Gold, forex, stocks, indices, energy and crypto in one place. Learn an idea, test it on real price
+              Commodities, forex, indices, stocks in every sector, ETFs and crypto in one place. Learn an idea, test it on real price
               history, then trade it with virtual money, with the risk shown before every move.
             </p>
             <div className="rise-in mt-10 flex flex-wrap items-center gap-3 [animation-delay:240ms]">
@@ -107,6 +108,11 @@ export default function Home() {
       </section>} />
 
       <HomeChart />
+
+      <section className="mt-10">
+        <MarketBrowser title="Every market, every sector"
+          subtitle="Commodities, currencies, world indices, stocks across every sector, ETFs and crypto. Pick one and the chart, paper account, backtests and news all follow it." />
+      </section>
 
       <Reveal as="section" className="mt-28 sm:mt-36">
         <div className="mx-auto max-w-2xl text-center">

@@ -1,8 +1,9 @@
 # Trading Lab
 
-Educational trading practice across markets, each with its own lab: Commodity Lab (gold, silver, oil, gas),
-Forex Lab, Index Lab, Stock Lab and Crypto Lab. Charts, strategy backtests, paper trading, news insights and
-risk-profile fit.
+Educational trading practice across about 150 markets, each kind with its own lab: Commodity Lab (metals,
+energy, grains and softs), Forex Lab (majors, crosses, exotics), Index Lab (Americas, Europe, Asia-Pacific),
+Stock Lab (stocks in every sector, plus sector, region and asset ETFs) and Crypto Lab. Charts, strategy
+backtests, paper trading, news by market and sector, and risk-profile fit.
 Nothing here is investment advice.
 
 ```
@@ -84,14 +85,19 @@ api/   FastAPI + Postgres (Railway). Auth, price data, and later backtests, news
   Money Mirror stake by default) into one of four of gold's worst 12-month falls since 1971, picked from monthly
   closes and shown without dates, and walks it a month at a time with Stay and Bail buttons. The month they bail is
   compared with the drawdown limit the quiz set, then the dates, the year-end value and the year after are shown.
-- **Trade log** (`api/app/trades.py`): manual entry or CSV import (MetaTrader 4/5 and most broker exports; gold
-  rows only; re-imports skip known tickets). Produces the same report as a backtest (`api/app/report.py`).
+- **Trade log** (`api/app/trades.py`): manual entry or CSV import on any market (MetaTrader 4/5 and most
+  broker exports; broker names like XAUUSD.m, GER40, US500 or #AAPL are matched; re-imports skip known tickets). Produces the same report as a backtest (`api/app/report.py`).
 
-- **News** (`api/app/news.py`): Finnhub headlines filtered to gold and its macro drivers, each tagged by
-  Claude (structured JSON output, model set by `NEWS_MODEL`) as bullish, bearish or neutral for gold with a
-  one-line reason. Needs `FINNHUB_API_KEY` and `ANTHROPIC_API_KEY`; without them the page says it isn't connected.
-- **US event calendar** (`api/app/calendar.py`): 2026 FOMC decisions seeded from the Fed's calendar, plus
-  this week's USD high/medium-impact releases from the public ForexFactory JSON feed (`CALENDAR_FEED_URL`).
+- **News** (`api/app/news.py`): Finnhub headlines (general, forex, crypto and merger feeds, plus company news
+  for the stocks in use) matched to the markets they name, to asset classes and stock sectors by keyword ("bank
+  stocks", "chipmakers", "crude"), or to the economy in general. Each is tagged by Claude (structured JSON output,
+  model set by `NEWS_MODEL`) as bullish, bearish or neutral for the market it is mainly about, with a one-line
+  reason. The page filters by market, asset class, sector or "economy and rates". Needs `FINNHUB_API_KEY` and
+  `ANTHROPIC_API_KEY`; without them the page says it isn't connected.
+- **Economic calendar** (`api/app/calendar.py`): 2026 FOMC decisions seeded from the Fed's calendar, plus
+  this week's high/medium-impact releases for the US, euro area, UK, Japan, China, Australia, New Zealand,
+  Canada and Switzerland from the public ForexFactory JSON feed (`CALENDAR_FEED_URL`). Each market sees the US
+  calendar plus its own economies (`Instrument.currencies`); realistic fills widen spreads on the same basis.
 - **Trade scenarios** (`api/app/scenarios.py`): for a trade opened now, 2,000 simulated paths built from real
   trading days drawn at random from the lookback period (close, high and low moves). Shows price ranges by date,
   how often the stop or target is hit first, and the profit or loss spread. The past average move is removed by
@@ -206,20 +212,37 @@ years. Daily charts and backtests use only the hourly data.
 
 ### Other markets
 
-Besides gold, the charts, backtests and paper trading work on silver, WTI and Brent oil, natural gas,
-EUR/USD, GBP/USD, AUD/USD, the S&P 500, Nasdaq 100 and Dow Jones, Apple, Microsoft, Nvidia, Amazon,
-Tesla, Bitcoin and Ether (all quoted in US dollars). The list and each market's rules live in
-`api/app/instruments.py`: trading hours (forex hours, US stock hours, or around the clock for crypto),
-contract size, a leverage cap (the account's leverage applies up to it), spread and overnight swap.
+Every tool (chart, backtests, strategy builder, agent, paper trading, replays, challenges, alerts, news) works on
+the whole catalog in `api/app/instruments.py`, about 150 markets grouped by asset class and by a sector, region
+or kind inside it: precious and industrial metals, oil and gas, grains and softs; forex majors, crosses and
+exotics; US, European and Asia-Pacific indices (S&P 500 to the DAX, FTSE, Nikkei, Hang Seng and Nifty 50); US
+stocks across technology, communication, consumer, staples, healthcare, financials, energy and industrials;
+sector, region, commodity and bond ETFs; and the large crypto coins. Each market has trading hours (forex hours,
+US stock hours, European or Indian index sessions, or around the clock), contract size, a leverage cap (the
+account's leverage applies up to it), spread and overnight swap.
+
+- **Currencies.** The account is in US dollars. Markets quoted in another currency (USD/JPY and the other yen
+  pairs, crosses like EUR/GBP, the DAX in euros, the FTSE in pounds, the Nikkei in yen...) convert every price
+  move into dollars with `Instrument.usd(price)`: exactly from the pair's own price for USD/xxx pairs, otherwise
+  at the ECB reference rate from `app/fx.py`. Paper trading, backtests, scenarios, replays, the trade log, risk
+  checks and the order ticket all use it.
+- **Loaded on first use.** Only the core markets (`MARKETS_PRELOAD`, about 20 by default) are fetched on every
+  update. Any other market is fetched the first time someone opens it (the chart says so and fills in a minute or
+  two later), then kept up to date while it is in use: opened in the last `ACTIVE_DAYS` (14), or holding paper
+  positions, orders, an agent or alerts. This keeps the database to the markets people actually use.
+- **Probe.** On start the API checks once that the feed carries each catalog market (`python -m app.ingest probe`
+  does the same by hand). A market it doesn't carry is left out of the list and checked again after a week.
 
 - History comes from the same free Dukascopy feed, no key needed, from `MARKET_HISTORY_SINCE`
   (default 2015-01-01). Gold keeps its full history from 2003.
 - Live quotes come from Finnhub's free websocket with the same `FINNHUB_API_KEY`: OANDA prices for
-  metals, energy, forex and indices, US stock trades, and Binance for crypto.
+  metals, energy, forex and indices, US stock trades, and Binance for crypto. The free plan streams 50 symbols,
+  so the core markets come first, then those in use (`LIVE_MAX`). A first quote far from the stored price is
+  ignored, so a live symbol quoted in other units can't write bars on a different scale.
 - `MARKETS` limits which markets are fetched (`all` by default, or a comma-separated list of symbols such as
   `XAUUSD,EURUSD,AAPLUSUSD`). `SECOND_SYMBOLS` lists the markets that keep 1-second bars (gold by default).
-- Not included: Indian (NSE/BSE) stocks and futures, which have no free feed here and would need a paid
-  data provider; and markets not priced in dollars (USD/JPY, the DAX), which would need currency conversion.
+- Not included: Indian (NSE/BSE) single stocks, the Sensex and the rupee pairs, which the free feed doesn't
+  carry (India is covered by the Nifty 50 index CFD and the India ETF); these would need a paid data provider.
 
 Switching source wipes the old bars so the two never mix (the monthly history is kept). `python -m app.ingest update` refreshes the
 latest bars; set `ENABLE_SCHEDULER=true` to have the API do this every `UPDATE_INTERVAL_MIN` minutes.

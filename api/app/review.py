@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from psycopg.types.json import Jsonb
 
 from . import config, db
+from . import instruments as ins
 from .auth import UserOut, current_user
 from .risk import profile_of
 
@@ -71,8 +72,9 @@ def facts(c, user_id: int, p: dict) -> dict:
                       "AND closed_at <= %s AND id <> %s", (user_id, p["opened_at"], p["id"])).fetchone()["s"]
     acct = c.execute("SELECT starting_balance FROM paper_accounts WHERE user_id = %s", (user_id,)).fetchone()
     equity = (acct["starting_balance"] if acct else 10_000.0) + prior
-    risk = abs(entry - p["stop_loss"]) * units if p["stop_loss"] else None
-    reward = abs(p["take_profit"] - entry) * units if p["take_profit"] else None
+    fx = ins.known(p.get("symbol")).usd(entry)  # dollars per unit of the market's quote currency
+    risk = abs(entry - p["stop_loss"]) * units * fx if p["stop_loss"] else None
+    reward = abs(p["take_profit"] - entry) * units * fx if p["take_profit"] else None
     profile = profile_of(user_id)
     limit = profile["max_risk_per_trade_pct"] if profile else 1.0
 

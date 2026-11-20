@@ -6,9 +6,9 @@ const hi: Record<string, string> = {
   "Practise": "अभ्यास",
   "You": "आप",
   "Chart": "चार्ट",
-  "Any market live, and gold back to 1833": "हर बाज़ार लाइव, और सोना 1833 से",
+  "Every market live: commodities, forex, indices, stocks, ETFs, crypto": "हर बाज़ार लाइव: कमोडिटी, फ़ॉरेक्स, इंडेक्स, शेयर, ETF, क्रिप्टो",
   "News and calendar": "ख़बरें और कैलेंडर",
-  "What's moving gold, and the Fed dates ahead": "सोने को क्या हिला रहा है, और आगे की फ़ेड तारीख़ें",
+  "Headlines by market and sector, and the calendar ahead": "बाज़ार और सेक्टर के हिसाब से ख़बरें, और आगे का कैलेंडर",
   "Strategy finder": "रणनीति खोजक",
   "Strategies that stayed inside your limits": "वे रणनीतियाँ जो आपकी सीमाओं में रहीं",
   "Backtest": "बैकटेस्ट",
@@ -77,8 +77,8 @@ const hi: Record<string, string> = {
     "आज की विनिमय दर पर हाजिर भाव, स्थानीय कर, शुल्क और मेकिंग चार्ज से पहले।",
   "Rough exchange rate; today's rate couldn't be loaded.": "अनुमानित विनिमय दर; आज की दर लोड नहीं हो सकी।",
   // Footer
-  "Trading Lab is an educational analysis tool. Nothing on this site is investment advice or a recommendation to buy or sell. Trading gold and other leveraged products carries a high risk of loss. Past performance and backtests do not guarantee future results. AI answers can be wrong.":
-    "ट्रेडिंग लैब एक शैक्षिक विश्लेषण टूल है। इस साइट पर कुछ भी निवेश सलाह या ख़रीदने-बेचने की सिफ़ारिश नहीं है। सोने और अन्य लीवरेज वाले उत्पादों में ट्रेडिंग से नुकसान का बड़ा जोखिम है। पिछला प्रदर्शन और बैकटेस्ट भविष्य के नतीजों की गारंटी नहीं देते। AI के जवाब ग़लत हो सकते हैं।",
+  "Trading Lab is an educational analysis tool. Nothing on this site is investment advice or a recommendation to buy or sell. Trading leveraged products such as CFDs, forex and crypto carries a high risk of loss. Past performance and backtests do not guarantee future results. AI answers can be wrong.":
+    "ट्रेडिंग लैब एक शैक्षिक विश्लेषण टूल है। इस साइट पर कुछ भी निवेश सलाह या ख़रीदने-बेचने की सिफ़ारिश नहीं है। CFD, फ़ॉरेक्स और क्रिप्टो जैसे लीवरेज वाले उत्पादों में ट्रेडिंग से नुकसान का बड़ा जोखिम है। पिछला प्रदर्शन और बैकटेस्ट भविष्य के नतीजों की गारंटी नहीं देते। AI के जवाब ग़लत हो सकते हैं।",
   "Read the full disclaimer": "पूरा अस्वीकरण पढ़ें",
 };
 export default hi;

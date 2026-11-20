@@ -6,7 +6,7 @@ os.environ["EMAIL_PROVIDER"] = "console"
 import pytest
 from fastapi.testclient import TestClient
 
-from app import db, fills
+from app import db, fills, fx
 from app.main import app
 
 
@@ -25,3 +25,12 @@ def no_rollover(monkeypatch):
     fills.clear_cache()
     yield
     fills.clear_cache()
+
+
+@pytest.fixture(autouse=True)
+def fixed_fx(monkeypatch):
+    """Exchange rates are the built-in rough ones, so converting P&L of non-dollar markets is deterministic."""
+    fx.clear_cache()
+    monkeypatch.setattr(fx, "_cache", {"at": 1e18, "rates": None, "as_of": None})
+    yield
+    fx.clear_cache()

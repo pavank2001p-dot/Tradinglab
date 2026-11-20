@@ -16,6 +16,8 @@ PRICE_SOURCE = os.getenv("PRICE_SOURCE", "dukascopy")
 # Run the price updater inside the API process (one Railway service, no separate cron).
 ENABLE_SCHEDULER = _bool("ENABLE_SCHEDULER", False)
 UPDATE_INTERVAL_MIN = int(os.getenv("UPDATE_INTERVAL_MIN", "15"))
+# A market outside the core list stays up to date for this many days after someone last opened it.
+ACTIVE_DAYS = int(os.getenv("ACTIVE_DAYS", "14"))
 SYMBOL = "XAUUSD"
 # Oldest hourly bar to fetch from Dukascopy, whose XAU/USD feed starts in 2003. Older years come
 # from the bundled monthly history (since 1833) and show on the monthly chart only.
@@ -36,6 +38,8 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 NEWS_MODEL = os.getenv("NEWS_MODEL", "claude-opus-5-5")
 # Stream live quotes from Finnhub's websocket (needs FINNHUB_API_KEY and ENABLE_SCHEDULER).
 LIVE_PRICES = _bool("LIVE_PRICES", True)
+# Most live symbols streamed at once (Finnhub's free plan allows 50).
+LIVE_MAX = int(os.getenv("LIVE_MAX", "50"))
 NEWS_INTERVAL_MIN = int(os.getenv("NEWS_INTERVAL_MIN", "30"))
 # Free weekly calendar feed (ForexFactory's public JSON). Set to "" to rely on the seeded Fed dates only.
 CALENDAR_FEED_URL = os.getenv("CALENDAR_FEED_URL", "https://nfs.faireconomy.media/ff_calendar_thisweek.json")

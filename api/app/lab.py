@@ -13,6 +13,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends
 
 from . import db, learn
+from . import instruments as ins
 from .achievements import compute as badges_of
 from .auth import UserOut, current_user
 from .practice import week_of
@@ -113,7 +114,7 @@ def compute(user_id: int, now: datetime | None = None) -> dict:
         strategies = q("SELECT id, rules, updated_at AS ts FROM custom_strategies WHERE user_id = %s ORDER BY updated_at DESC")
         tests = q("SELECT created_at AS ts FROM backtests WHERE user_id = %s ORDER BY created_at DESC LIMIT 500")
         diagnosed = q("SELECT created_at AS ts FROM agent_analyses WHERE user_id = %s")
-        positions = q("SELECT id, stop_loss, entry_price, units, opened_at AS ts, closed_at FROM paper_positions "
+        positions = q("SELECT id, symbol, stop_loss, entry_price, units, opened_at AS ts, closed_at FROM paper_positions "
                       "WHERE user_id = %s AND order_kind <> 'agent' ORDER BY opened_at DESC LIMIT 500")
         weekly = q("SELECT week, created_at AS ts FROM challenge_entries WHERE user_id = %s")
         props = q("SELECT status, plan, phase, started_at AS ts, ended_at FROM prop_challenges WHERE user_id = %s "
@@ -134,7 +135,8 @@ def compute(user_id: int, now: datetime | None = None) -> dict:
     # XP, from process only.
     cap = account["starting_balance"] * profile["max_risk_per_trade_pct"] / 100 if profile and account else None
     stopped = [p for p in positions if p["stop_loss"] is not None]
-    inside = [p for p in stopped if cap is not None and abs(p["entry_price"] - p["stop_loss"]) * p["units"] <= cap + 1e-9]
+    inside = [p for p in stopped if cap is not None and abs(p["entry_price"] - p["stop_loss"]) * p["units"]
+              * ins.known(p.get("symbol")).usd(p["entry_price"]) <= cap + 1e-9]
     habits = badges_of(user_id, now)
     counts = {
         "limits": 1 if profile else 0,

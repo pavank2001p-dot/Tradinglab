@@ -109,7 +109,7 @@ export default function AlertsCard({ price: given = null, open: startOpen = fals
 }
 
 /** The alerts card for signed-in visitors only, for pages anyone can open. */
-export function SignedInAlerts(props: { open?: boolean }) {
+export function SignedInAlerts(props: { open?: boolean; market?: Market }) {
   const { user } = useUser();
   return user ? <AlertsCard {...props} /> : null;
 }

@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { api, fmtUsd, type Achievements, type AgentState, type CalendarEvent, type PaperState, type User } from "@/lib/api";
+import { hasChosenMarket, useMarket } from "@/lib/markets";
+import MarketBrowser from "./markets/MarketBrowser";
 import { useBadgeToasts, Streak } from "./Badges";
 import LabHome from "./LabHome";
 import { MirrorJar } from "./MoneyMirror";
@@ -19,7 +21,7 @@ function Spark({ closes }: { closes: number[] }) {
   const up = closes[closes.length - 1] >= closes[0];
   const color = up ? "var(--up)" : "var(--down)";
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="fan-in h-28 w-full" aria-label={`Gold over the last ${closes.length} hours`}>
+    <svg viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none" className="fan-in h-28 w-full" aria-label={`Price over the last ${closes.length} hours`}>
       <defs>
         <linearGradient id="spark-fill" x1="0" x2="0" y1="0" y2="1">
           <stop offset="0" stopColor={color} stopOpacity="0.28" />
@@ -66,6 +68,9 @@ function when(ts: string, now: Date) {
 
 /** The signed-in home: price, practice account, agent, today's events and habits at a glance. */
 export default function Dashboard({ user }: { user: User }) {
+  const [market] = useMarket();
+  const [firstVisit, setFirstVisit] = useState(false);
+  useEffect(() => setFirstVisit(!hasChosenMarket()), [market.symbol]);
   const [paper, setPaper] = useState<PaperState | null>(null);
   const [agent, setAgent] = useState<AgentState | null>(null);
   const [events, setEvents] = useState<CalendarEvent[] | null>(null);
@@ -78,15 +83,15 @@ export default function Dashboard({ user }: { user: User }) {
     const load = () => {
       api.paper().then(setPaper, () => {});
       api.agent().then(setAgent, () => {});
-      api.candles("1h", { limit: 48 }).then((b) => setCloses(b.map((x) => x.c)), () => {});
+      api.candles("1h", { limit: 48, symbol: market.symbol }).then((b) => setCloses(b.map((x) => x.c)), () => {});
       setNow(new Date());
     };
     load();
-    api.calendar(7).then(setEvents, () => setEvents([]));
+    api.calendar(7, market.symbol).then(setEvents, () => setEvents([]));
     api.achievements().then(setHabits, () => {});
     const t = setInterval(() => document.visibilityState === "visible" && load(), POLL_MS);
     return () => clearInterval(t);
-  }, []);
+  }, [market.symbol]);
 
   const a = paper?.account;
   const upcoming = (events ?? []).filter((e) => new Date(e.ts).getTime() > now.getTime() - 3_600_000).slice(0, 4);
@@ -116,9 +121,16 @@ export default function Dashboard({ user }: { user: User }) {
 
       <LabHome />
 
+      {firstVisit && (
+        <div className="relative mt-4">
+          <MarketBrowser title="Which market do you want to practise on?"
+            subtitle="Pick any market. The chart, paper account, backtests, alerts and news all follow your choice, and you can switch any time from the market button on each page." />
+        </div>
+      )}
+
       <div className="relative mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <Tile title="Gold right now" icon="candles" href="/chart" cta="Chart" className="lg:col-span-2" tour="price">
-          <PriceTicker />
+        <Tile title={`${market.name} right now`} icon="candles" href="/chart" cta="Chart" className="lg:col-span-2" tour="price">
+          <PriceTicker market={market} />
           <div className="mt-3"><Spark closes={closes} /></div>
           <p className="text-[11px] text-muted">Last 48 hours, hourly closes.</p>
         </Tile>

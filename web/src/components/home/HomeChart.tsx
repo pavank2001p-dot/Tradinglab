@@ -7,7 +7,7 @@ import { SignedOut } from "@/components/HomeTop";
 import { ticker, useMarket } from "@/lib/markets";
 
 /** One of each lab, so the home chart shows at a glance that it isn't only gold. */
-const QUICK = ["XAUUSD", "EURUSD", "USA500IDXUSD", "AAPLUSUSD", "BTCUSD", "LIGHTCMDUSD"];
+const QUICK = ["EURUSD", "USA500IDXUSD", "INDIDXUSD", "AAPLUSUSD", "XAUUSD", "LIGHTCMDUSD", "BTCUSD"];
 
 /** The home page chart. It follows the market the visitor picks, shared with the chart and paper pages. */
 export default function HomeChart() {

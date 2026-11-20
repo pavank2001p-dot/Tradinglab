@@ -1,7 +1,9 @@
 """Realistic fills: spreads widen and stops slip at the times they do at a real broker.
 
-Two moments matter most for gold and the other US-dollar markets:
-- High-impact releases (CPI, payrolls, Fed decisions, from the events table): from a few minutes before to a
+Two moments matter most:
+- High-impact releases (CPI, payrolls, central bank decisions, from the events table) of the economies a
+  market depends on (US releases for every market, plus euro-area ones for EUR/USD or the DAX, Japanese ones
+  for USD/JPY or the Nikkei, and so on; see Instrument.currencies): from a few minutes before to a
   quarter of an hour after, the spread is several times its usual size and stop orders fill a little past
   their price, because the market jumps instead of trading through every level.
 - The daily rollover at 17:00 New York time, when liquidity thins out and spreads widen for a few minutes.
@@ -43,14 +45,21 @@ class Conditions:
     """High-impact release times over a span, and the spread and slippage they imply at any moment."""
     events: list[datetime] = field(default_factory=list)
     on: bool = True
+    countries: list[str] = field(default_factory=list)  # each event's currency code; empty means "matters to all"
 
-    def near_news(self, t: datetime) -> bool:
-        return self.on and any(e - NEWS_BEFORE <= t <= e + NEWS_AFTER for e in self.events)
+    def _times(self, inst: ins.Instrument | None) -> list[datetime]:
+        if inst is None or not self.countries:
+            return self.events
+        mine = inst.currencies
+        return [e for e, c in zip(self.events, self.countries) if c in mine]
+
+    def near_news(self, t: datetime, inst: ins.Instrument | None = None) -> bool:
+        return self.on and any(e - NEWS_BEFORE <= t <= e + NEWS_AFTER for e in self._times(inst))
 
     def why(self, inst: ins.Instrument, t: datetime) -> str | None:
         if not self.on:
             return None
-        if self.near_news(t):
+        if self.near_news(t, inst):
             return "news"
         if _has_rollover(inst) and in_rollover(t):
             return "rollover"
@@ -62,17 +71,17 @@ class Conditions:
 
     def slip(self, inst: ins.Instrument, t: datetime) -> float:
         """How much further than its price a stop order or stop loss fills at time t."""
-        return inst.spread * NEWS_SLIP_X if self.near_news(t) else 0.0
+        return inst.spread * NEWS_SLIP_X if self.near_news(t, inst) else 0.0
 
-    def news_between(self, a: datetime, b: datetime) -> bool:
+    def news_between(self, a: datetime, b: datetime, inst: ins.Instrument | None = None) -> bool:
         """Whether a release falls inside [a, b), for coarse bars such as hourly and daily ones."""
-        return self.on and any(a - NEWS_BEFORE <= e < b + NEWS_AFTER for e in self.events)
+        return self.on and any(a - NEWS_BEFORE <= e < b + NEWS_AFTER for e in self._times(inst))
 
 
 def load(c, start: datetime, end: datetime) -> Conditions:
-    rows = c.execute("SELECT ts FROM events WHERE impact = 'High' AND ts BETWEEN %s AND %s ORDER BY ts",
+    rows = c.execute("SELECT ts, country FROM events WHERE impact = 'High' AND ts BETWEEN %s AND %s ORDER BY ts",
                      (start - NEWS_AFTER, end + NEWS_BEFORE)).fetchall()
-    return Conditions([r["ts"] for r in rows])
+    return Conditions([r["ts"] for r in rows], countries=[r["country"] or "USD" for r in rows])
 
 
 _cache: tuple[float, Conditions] | None = None

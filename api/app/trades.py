@@ -1,4 +1,6 @@
-"""The user's own trade log: manual entries, broker CSV import, and the same report as a backtest."""
+"""The user's own trade log on any market: manual entries, broker CSV import, and the same report as a backtest.
+Profit and loss is in US dollars; a market quoted in another currency converts at Instrument.usd. Broker fees
+and swap are taken as already in the account's currency."""
 
 import csv
 import io
@@ -10,30 +12,38 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from pydantic import BaseModel, Field, model_validator
 
 from . import db
+from . import instruments as ins
 from .auth import UserOut, current_user
 from .report import build_report
 
 router = APIRouter(prefix="/trades", tags=["trades"])
 
 MAX_UPLOAD = 2 * 1024 * 1024
-COLUMNS = "id, side, units, open_time, open_price, close_time, close_price, stop_loss, take_profit, fees, swap, notes, source"
+COLUMNS = ("id, symbol, side, units, open_time, open_price, close_time, close_price, stop_loss, take_profit, fees, swap, "
+           "notes, source")
+MAX_PRICE = 1e9
 
 
 class TradeIn(BaseModel):
+    symbol: str = Field(ins.DEFAULT, description="Market (see /prices/markets); gold when left out")
     side: Literal["long", "short"]
-    units: float = Field(gt=0, le=1_000_000, description="Ounces (1 standard lot = 100 oz)")
+    units: float = Field(gt=0, le=1e12, description="In the market's unit: ounces, shares, contracts, currency units...")
     open_time: datetime
-    open_price: float = Field(gt=0, lt=100_000)
+    open_price: float = Field(gt=0, lt=MAX_PRICE)
     close_time: datetime | None = None
-    close_price: float | None = Field(None, gt=0, lt=100_000)
-    stop_loss: float | None = Field(None, gt=0, lt=100_000)
-    take_profit: float | None = Field(None, gt=0, lt=100_000)
+    close_price: float | None = Field(None, gt=0, lt=MAX_PRICE)
+    stop_loss: float | None = Field(None, gt=0, lt=MAX_PRICE)
+    take_profit: float | None = Field(None, gt=0, lt=MAX_PRICE)
     fees: float = Field(0, ge=0, le=1_000_000)
     swap: float = Field(0, ge=-1_000_000, le=1_000_000)
     notes: str = Field("", max_length=1000)
 
     @model_validator(mode="after")
     def _check(self):
+        try:
+            self.symbol = ins.get(self.symbol).symbol
+        except KeyError:
+            raise ValueError(f"Unknown market {self.symbol}")
         for name in ("open_time", "close_time"):
             v = getattr(self, name)
             if v is not None and v.tzinfo is None:
@@ -49,7 +59,8 @@ def pnl(t: dict) -> float | None:
     if t["close_price"] is None:
         return None
     sign = 1 if t["side"] == "long" else -1
-    return round((t["close_price"] - t["open_price"]) * t["units"] * sign - t["fees"] + t["swap"], 2)
+    fx = ins.known(t.get("symbol")).usd(t["close_price"])  # dollars per unit of the market's quote currency
+    return round((t["close_price"] - t["open_price"]) * t["units"] * sign * fx - t["fees"] + t["swap"], 2)
 
 
 def _out(row: dict) -> dict:
@@ -58,11 +69,11 @@ def _out(row: dict) -> dict:
 
 def _insert(c, user_id: int, t: TradeIn, source: str = "manual", external_id: str | None = None):
     return c.execute(
-        f"""INSERT INTO trades (user_id, side, units, open_time, open_price, close_time, close_price,
+        f"""INSERT INTO trades (user_id, symbol, side, units, open_time, open_price, close_time, close_price,
                                 stop_loss, take_profit, fees, swap, notes, source, external_id)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT DO NOTHING RETURNING {COLUMNS}""",
-        (user_id, t.side, t.units, t.open_time, t.open_price, t.close_time, t.close_price,
+        (user_id, t.symbol, t.side, t.units, t.open_time, t.open_price, t.close_time, t.close_price,
          t.stop_loss, t.take_profit, t.fees, t.swap, t.notes, source, external_id),
     ).fetchone()
 
@@ -84,10 +95,10 @@ def create(t: TradeIn, user: UserOut = Depends(current_user)):
 def update(tid: int, t: TradeIn, user: UserOut = Depends(current_user)):
     with db.conn() as c:
         row = c.execute(
-            f"""UPDATE trades SET side=%s, units=%s, open_time=%s, open_price=%s, close_time=%s, close_price=%s,
+            f"""UPDATE trades SET symbol=%s, side=%s, units=%s, open_time=%s, open_price=%s, close_time=%s, close_price=%s,
                    stop_loss=%s, take_profit=%s, fees=%s, swap=%s, notes=%s
                 WHERE id = %s AND user_id = %s RETURNING {COLUMNS}""",
-            (t.side, t.units, t.open_time, t.open_price, t.close_time, t.close_price, t.stop_loss,
+            (t.symbol, t.side, t.units, t.open_time, t.open_price, t.close_time, t.close_price, t.stop_loss,
              t.take_profit, t.fees, t.swap, t.notes, tid, user.id),
         ).fetchone()
     if not row:
@@ -115,7 +126,7 @@ def log_report(user_id: int, capital: float) -> dict:
         cash += p
         equity.append((int(r["close_time"].timestamp()), cash))
         trades.append({
-            "id": r["id"], "side": r["side"], "units": r["units"],
+            "id": r["id"], "symbol": r["symbol"], "side": r["side"], "units": r["units"],
             "entry_time": int(r["open_time"].timestamp()), "entry_price": r["open_price"],
             "exit_time": int(r["close_time"].timestamp()), "exit_price": r["close_price"],
             "costs": r["fees"], "swap": r["swap"], "pnl": p,
@@ -193,8 +204,42 @@ def _when(v: str | None) -> datetime | None:
     return None
 
 
+# Broker names for markets that differ from ours, after removing punctuation and account suffixes.
+BROKER_NAMES = {
+    "GOLD": "XAUUSD", "SILVER": "XAGUSD", "XPTUSD": "XPTCMDUSD", "XPDUSD": "XPDCMDUSD", "COPPER": "COPPERCMDUSD",
+    "USOIL": "LIGHTCMDUSD", "WTI": "LIGHTCMDUSD", "CRUDE": "LIGHTCMDUSD", "CL": "LIGHTCMDUSD", "UKOIL": "BRENTCMDUSD",
+    "BRENT": "BRENTCMDUSD", "NATGAS": "GASCMDUSD", "NGAS": "GASCMDUSD", "XNGUSD": "GASCMDUSD",
+    "US500": "USA500IDXUSD", "SPX500": "USA500IDXUSD", "SP500": "USA500IDXUSD", "SPX": "USA500IDXUSD",
+    "US100": "USATECHIDXUSD", "NAS100": "USATECHIDXUSD", "USTEC": "USATECHIDXUSD", "NDX": "USATECHIDXUSD",
+    "US30": "USA30IDXUSD", "DJ30": "USA30IDXUSD", "WS30": "USA30IDXUSD", "US2000": "USSC2000IDXUSD",
+    "GER40": "DEUIDXEUR", "DE40": "DEUIDXEUR", "GER30": "DEUIDXEUR", "DE30": "DEUIDXEUR", "DAX": "DEUIDXEUR",
+    "UK100": "GBRIDXGBP", "FTSE": "GBRIDXGBP", "FRA40": "FRAIDXEUR", "FR40": "FRAIDXEUR", "EU50": "EUSIDXEUR",
+    "STOXX50": "EUSIDXEUR", "ESP35": "ESPIDXEUR", "ES35": "ESPIDXEUR", "NL25": "NLDIDXEUR", "SWI20": "CHEIDXCHF",
+    "JP225": "JPNIDXJPY", "JPN225": "JPNIDXJPY", "NIKKEI": "JPNIDXJPY", "HK50": "HKGIDXHKD", "HSI": "HKGIDXHKD",
+    "AUS200": "AUSIDXAUD", "AU200": "AUSIDXAUD", "CHINA50": "CHIIDXUSD", "CN50": "CHIIDXUSD",
+    "IND50": "INDIDXUSD", "IN50": "INDIDXUSD", "NIFTY": "INDIDXUSD", "NIFTY50": "INDIDXUSD",
+}
+
+
+def match_symbol(raw: str | None) -> ins.Instrument | None:
+    """Our market for a broker's symbol: "XAUUSD.m", "EURUSDm", "#AAPL", "AAPL.US", "GER40", "BTCUSD"..."""
+    s = re.sub(r"[^A-Z0-9]", "", (raw or "").upper().split(".")[0])
+    for cand in (s, s.removesuffix("M"), s.removesuffix("PRO"), s.removesuffix("ECN"), s.removesuffix("US"),
+                 s.removesuffix("CASH")):
+        if not cand:
+            continue
+        sym = BROKER_NAMES.get(cand) or cand
+        for key in (sym, f"{sym}USUSD"):
+            if key in ins.BY_SYMBOL:
+                return ins.BY_SYMBOL[key]
+        if cand.endswith("USDT") and f"{cand[:-1]}" in ins.BY_SYMBOL:
+            return ins.BY_SYMBOL[cand[:-1]]
+    return None
+
+
 def parse_csv(text: str, contract_size: float = 100) -> tuple[list[tuple[str | None, TradeIn]], list[str]]:
-    """Returns (ticket, trade) pairs for gold trades, plus human-readable reasons for skipped rows."""
+    """Returns (ticket, trade) pairs, plus human-readable reasons for skipped rows. Lots convert to units with
+    `contract_size` for gold (brokers differ) and each market's standard lot otherwise."""
     sample = text[:4096]
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
@@ -223,9 +268,9 @@ def parse_csv(text: str, contract_size: float = 100) -> tuple[list[tuple[str | N
         rec = {f: v for f, v in zip(fields, r) if f}
         if not any(v.strip() for v in r):
             continue
-        sym = rec.get("symbol", "xauusd").lower()
-        if "xau" not in sym and "gold" not in sym:
-            skipped.append(f"Row {n}: {rec.get('symbol')} is not gold")
+        inst = match_symbol(rec.get("symbol") or ins.DEFAULT)
+        if inst is None:
+            skipped.append(f"Row {n}: {rec.get('symbol')} isn't a market Trading Lab carries")
             continue
         side_raw = (rec.get("side") or "").strip().lower()
         side = "long" if side_raw.startswith(("buy", "long")) else "short" if side_raw.startswith(("sell", "short")) else None
@@ -233,10 +278,11 @@ def parse_csv(text: str, contract_size: float = 100) -> tuple[list[tuple[str | N
             skipped.append(f"Row {n}: '{rec.get('side', '')}' is not a buy or sell")
             continue
         lots, oz = _num(rec.get("size_lots")), _num(rec.get("size_oz"))
-        units = oz if oz else (lots * contract_size if lots else None)
+        units = oz if oz else (lots * (contract_size if inst.symbol == ins.DEFAULT else inst.lot) if lots else None)
         close_time, close_price = _when(rec.get("close_time")), _num(rec.get("close_price"))
         try:
             t = TradeIn(
+                symbol=inst.symbol,
                 side=side,
                 units=units,
                 open_time=_when(rec.get("open_time")),

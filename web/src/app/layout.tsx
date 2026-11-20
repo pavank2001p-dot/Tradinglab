@@ -18,7 +18,7 @@ const display = Instrument_Serif({ subsets: ["latin"], weight: "400", style: ["n
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: "Trading Lab: charts, backtests and paper trading",
-  description: "Chart, backtest and practise trading gold, commodities, forex, indices, stocks and crypto, with news insights matched to your risk appetite.",
+  description: "Chart, backtest and practise trading commodities, forex, indices, stocks in every sector, ETFs and crypto, with news insights matched to your risk appetite.",
 };
 
 export const viewport: Viewport = {

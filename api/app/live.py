@@ -19,6 +19,7 @@ from fastapi import HTTPException
 
 from . import config
 from . import instruments as ins
+from . import ingest
 from .ingest import Bar, upsert
 
 log = logging.getLogger("live")
@@ -27,6 +28,9 @@ router = APIRouter(prefix="/prices", tags=["prices"])
 FINNHUB_WS = "wss://ws.finnhub.io"
 SYMBOL = ins.GOLD.live  # gold's Finnhub symbol
 FLUSH_SECONDS = 5
+RESUBSCRIBE_SECONDS = 300
+# Finnhub's free plan streams up to 50 symbols at once: the core markets, then those in use.
+LIVE_MAX = config.LIVE_MAX
 STEPS = {"1s": 1, "1m": 60, "1h": 3600}
 
 
@@ -37,9 +41,30 @@ class Live:
         self.t: float | None = None  # unix seconds of the latest quote
         self.connected = False
         self.bars: dict[str, dict[int, Bar]] = {tf: {} for tf in STEPS}
+        self.ref: float | None = None  # the stored price the first quote is checked against
+
+    def sane(self, price: float) -> bool:
+        """The first quote must be near the stored price: a live symbol quoted in other units (cents, per
+        pound) would otherwise write bars on a different scale."""
+        if self.price is not None:
+            return True
+        if self.ref is None:
+            try:
+                with ingest.db.conn() as c:
+                    row = c.execute("SELECT close FROM candles WHERE symbol = %s AND tf = '1h' ORDER BY ts DESC LIMIT 1",
+                                    (self.symbol,)).fetchone()
+            except Exception:  # noqa: BLE001 - no database in some tests
+                row = None
+            self.ref = row["close"] if row else 0.0
+        if self.ref and not 0.5 < price / self.ref < 2:
+            log.warning("%s live quote %s is far from the stored %s; ignored", self.symbol, price, self.ref)
+            return False
+        return True
 
     def tick(self, price: float, t: float, volume: float = 0.0) -> None:
         if self.t is not None and t < self.t - 5:  # ignore stale or out-of-order quotes
+            return
+        if not self.sane(price):
             return
         self.price, self.t = price, max(t, self.t or t)
         for tf, step in STEPS.items():
@@ -70,6 +95,18 @@ class Live:
 
 feed = Live()  # gold
 _others: dict[str, Live] = {i.symbol: Live(i.symbol) for i in ins.ENABLED if i.live and i.symbol != ins.GOLD.symbol}
+
+
+def wanted() -> list[str]:
+    """Finnhub symbols to stream: the core markets first, then markets in use, up to LIVE_MAX."""
+    try:
+        active = ingest.active_symbols()
+    except Exception:  # noqa: BLE001 - stream the core markets if the database can't be read
+        log.warning("could not read markets in use", exc_info=True)
+        active = set()
+    order = [i for i in ins.ENABLED if i.live and i.symbol in ins.CORE]
+    order += [i for i in ins.ENABLED if i.live and i.symbol not in ins.CORE and i.symbol in active]
+    return [i.live for i in order][:LIVE_MAX]
 
 
 def feed_of(symbol: str) -> Live | None:
@@ -113,15 +150,30 @@ async def run() -> None:
         while True:
             try:
                 async with connect(f"{FINNHUB_WS}?token={config.FINNHUB_API_KEY}", ping_interval=30) as ws:
-                    for i in ins.ENABLED:
-                        if i.live:
-                            await ws.send(json.dumps({"type": "subscribe", "symbol": i.live}))
+                    subscribed: set[str] = set()
+
+                    async def resubscribe():
+                        # Follow the markets in use: stream newly opened ones, drop those no longer used.
+                        while True:
+                            want = set(await asyncio.to_thread(wanted))
+                            for sym in sorted(want - subscribed):
+                                await ws.send(json.dumps({"type": "subscribe", "symbol": sym}))
+                            for sym in sorted(subscribed - want):
+                                await ws.send(json.dumps({"type": "unsubscribe", "symbol": sym}))
+                            subscribed.clear()
+                            subscribed.update(want)
+                            await asyncio.sleep(RESUBSCRIBE_SECONDS)
+
+                    follower = asyncio.create_task(resubscribe())
                     for f in all_feeds():
                         f.connected = True
                     delay = 1
                     log.info("live prices connected")
-                    async for message in ws:
-                        handle(message)
+                    try:
+                        async for message in ws:
+                            handle(message)
+                    finally:
+                        follower.cancel()
             except asyncio.CancelledError:
                 raise
             except Exception as e:

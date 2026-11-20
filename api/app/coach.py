@@ -20,6 +20,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field
 
 from . import config, db
+from . import instruments as ins
 from .auth import UserOut, current_user
 from .risk import profile_of
 
@@ -88,7 +89,8 @@ def tag_trades(c, user_id: int, until: datetime | None = None) -> list[dict]:
         if before and (before[-1]["pnl"] or 0) < 0 and r["opened_at"] - before[-1]["closed_at"] <= timedelta(minutes=REVENGE_MIN):
             tags.append("revenge")
         equity = start_balance + sum(q["pnl"] or 0 for q in before)
-        risk_pct = (abs(r["entry_price"] - r["stop_loss"]) * r["units"] / equity * 100
+        risk_pct = (abs(r["entry_price"] - r["stop_loss"]) * r["units"] * ins.known(r["symbol"]).usd(r["entry_price"])
+                    / equity * 100
                     if r["stop_loss"] is not None and equity > 0 else None)
         if risk_pct is not None and risk_pct > limit * 1.05:
             tags.append("oversized")

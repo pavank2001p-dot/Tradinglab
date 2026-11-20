@@ -7,6 +7,8 @@ import Insights from "@/components/practice/Insights";
 import SignInPrompt from "@/components/SignInPrompt";
 import { Empty, Icon, PageHeader, SidePill } from "@/components/ui";
 import { api, fmtUsd, type ImportResult, type Report, type Trade, type TradeInput } from "@/lib/api";
+import MarketPicker from "@/components/markets/MarketPicker";
+import { fmtMarketPrice, GOLD, ticker, unitsLabel, useMarket } from "@/lib/markets";
 import { useUser } from "@/lib/useUser";
 
 const input = "w-full rounded-lg border border-border bg-background px-3 py-1.5 outline-none focus:border-gold";
@@ -27,6 +29,8 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 export default function TradesPage() {
   const { user } = useUser();
+  const [market, setSymbol, markets] = useMarket();
+  const marketOf = (t: Trade) => markets.find((x) => x.symbol === (t.symbol ?? GOLD.symbol)) ?? GOLD;
   const [trades, setTrades] = useState<Trade[]>([]);
   const [report, setReport] = useState<Report | null>(null);
   const [capital, setCapital] = useState(10000);
@@ -47,7 +51,7 @@ export default function TradesPage() {
     if (user) refresh().catch(() => {});
   }, [user, refresh]);
 
-  if (user === null) return <SignInPrompt what="keep a log of your gold trades" next="/trades" />;
+  if (user === null) return <SignInPrompt what="keep a log of your trades on any market" next="/trades" />;
   if (user === undefined) return null;
 
   const set = (k: keyof typeof blank) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
@@ -59,6 +63,7 @@ export default function TradesPage() {
     setError(null);
     try {
       const t: TradeInput = {
+        symbol: market.symbol,
         side: f.side as "long" | "short",
         units: Number(f.units),
         open_time: utc(f.open_time)!,
@@ -105,11 +110,15 @@ export default function TradesPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-8 px-4 py-8">
       <PageHeader icon="trades" title="Your trade log"
-        subtitle="Log your gold trades by hand or import your broker's history, and get the same report as a backtest." />
+        subtitle="Log your trades on any market by hand or import your broker's history, and get the same report as a backtest. Profit and loss is in US dollars." />
 
       <div className="grid gap-6 lg:grid-cols-[1fr_320px]">
         <form onSubmit={add} className="rounded-2xl border border-border bg-surface/50 p-4">
           <h2 className="flex items-center gap-2 font-medium"><Icon name="trades" className="h-4 w-4 text-gold" /> Add a trade</h2>
+          <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-muted">Market</span>
+            <MarketPicker market={market} markets={markets} onChange={setSymbol} />
+          </div>
           <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="text-sm">
               <span className="text-muted">Side</span>
@@ -122,7 +131,7 @@ export default function TradesPage() {
                 ))}
               </div>
             </div>
-            <Field label="Ounces (1 lot = 100)"><input required type="number" step="any" min="0.01" className={input} value={f.units} onChange={set("units")} /></Field>
+            <Field label={`${unitsLabel(market)[0].toUpperCase()}${unitsLabel(market).slice(1)}${market.lot > 1 ? ` (1 lot = ${market.lot.toLocaleString()})` : ""}`}><input required type="number" step="any" min="0.01" className={input} value={f.units} onChange={set("units")} /></Field>
             <Field label="Opened (UTC)"><input required type="datetime-local" className={input} value={f.open_time} onChange={set("open_time")} /></Field>
             <Field label="Open price"><input required type="number" step="any" min="0" className={input} value={f.open_price} onChange={set("open_price")} /></Field>
             <Field label="Stop loss"><input type="number" step="any" className={input} value={f.stop_loss} onChange={set("stop_loss")} /></Field>
@@ -142,11 +151,12 @@ export default function TradesPage() {
         <div className="rounded-2xl border border-border bg-surface/50 p-4">
           <h2 className="flex items-center gap-2 font-medium"><Icon name="upload" className="h-4 w-4 text-gold" /> Import from your broker</h2>
           <p className="mt-1 text-xs text-muted">
-            Upload a CSV of your trade history. MetaTrader 4/5 and most broker exports work. Only gold (XAU) rows are
-            imported, and re-importing the same file skips trades you already have.
+            Upload a CSV of your trade history. MetaTrader 4/5 and most broker exports work. Rows for any market Trading Lab
+            carries are imported (broker names like XAUUSD.m, GER40, US500 or #AAPL are recognised), and re-importing the
+            same file skips trades you already have.
           </p>
           <div className="mt-3 space-y-3">
-            <Field label="Ounces per lot at your broker">
+            <Field label="Gold: ounces per lot at your broker (other markets use their standard lot)">
               <input type="number" min="1" className={input} value={contract} onChange={(e) => setContract(Number(e.target.value) || 100)} />
             </Field>
             <label
@@ -207,11 +217,12 @@ export default function TradesPage() {
             <table className="w-full text-sm tabular-nums">
               <thead className="bg-surface text-left text-xs text-muted">
                 <tr>
+                  <th className="px-3 py-2">Market</th>
                   <th className="px-3 py-2">Side</th>
                   <th className="px-3 py-2">Opened (UTC)</th>
                   <th className="px-3 py-2 text-right">Open</th>
                   <th className="px-3 py-2 text-right">Close</th>
-                  <th className="px-3 py-2 text-right">Oz</th>
+                  <th className="px-3 py-2 text-right">Size</th>
                   <th className="px-3 py-2 text-right">P&amp;L</th>
                   <th className="px-3 py-2">Notes</th>
                   <th className="px-3 py-2" />
@@ -220,10 +231,11 @@ export default function TradesPage() {
               <tbody>
                 {trades.map((t) => (
                   <tr key={t.id} className="border-t border-border transition-colors hover:bg-surface">
+                    <td className="whitespace-nowrap px-3 py-1.5">{ticker(marketOf(t))}</td>
                     <td className="px-3 py-1.5"><SidePill side={t.side} /></td>
                     <td className="whitespace-nowrap px-3 py-1.5">{t.open_time.slice(0, 16).replace("T", " ")}</td>
-                    <td className="px-3 py-1.5 text-right">{t.open_price.toFixed(2)}</td>
-                    <td className="px-3 py-1.5 text-right">{t.close_price?.toFixed(2) ?? <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[11px] text-gold">open</span>}</td>
+                    <td className="px-3 py-1.5 text-right">{fmtMarketPrice(t.open_price, marketOf(t))}</td>
+                    <td className="px-3 py-1.5 text-right">{t.close_price != null ? fmtMarketPrice(t.close_price, marketOf(t)) : <span className="rounded-full bg-gold/15 px-2 py-0.5 text-[11px] text-gold">open</span>}</td>
                     <td className="px-3 py-1.5 text-right">{t.units}</td>
                     <td className={`px-3 py-1.5 text-right ${(t.pnl ?? 0) >= 0 ? "text-up" : "text-down"}`}>{fmtUsd(t.pnl)}</td>
                     <td className="max-w-48 truncate px-3 py-1.5 text-muted">{t.notes}</td>

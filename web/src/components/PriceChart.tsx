@@ -92,6 +92,14 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
   const [tf, setTf] = useState<ChartTf>(initialTf);
   const [error, setError] = useState<string | null>(null);
   const [empty, setEmpty] = useState(false);
+  // A market opened for the first time has no prices until its history is fetched: check back until it arrives.
+  const [retry, setRetry] = useState(0);
+  useEffect(() => setRetry(0), [symbol]);
+  useEffect(() => {
+    if (!empty || market?.core || retry >= 40) return;
+    const id = setTimeout(() => setRetry((r) => r + 1), 15_000);
+    return () => clearTimeout(id);
+  }, [empty, retry, market?.core]);
   const [full, setFull] = useState(false);
   const [quote, setQuote] = useState<LiveQuote | null>(null);
   const [all, setAll] = useState(false); // whole history on monthly candles
@@ -273,7 +281,7 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
       clearInterval(poll);
       chart.timeScale().unsubscribeVisibleLogicalRangeChange(onRange);
     };
-  }, [tf, all, symbol]);
+  }, [tf, all, symbol, retry]);
 
   // Legend: the candle under the crosshair (or the latest), like other charting platforms.
   useEffect(() => {
@@ -299,7 +307,7 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
     eventsKey.current = key;
     // Weekly and monthly candles are too coarse for every release, so show only the turning points there.
     const coarse = tf === "1w" || tf === "1mo";
-    api.markers(bs[0].t, Math.floor(Date.now() / 1000) + 86400, !coarse).then(setEvents, () => setEvents([]));
+    api.markers(bs[0].t, Math.floor(Date.now() / 1000) + 86400, !coarse, symbol).then(setEvents, () => setEvents([]));
   }, [tools, showEvents, tf, all, ver, symbol]);
 
   useEffect(() => {
@@ -536,7 +544,9 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
       {error && <p className="px-3 py-2 text-sm text-down">Couldn&apos;t load prices: {error}</p>}
       {empty && !error && (
         <p className="px-3 py-2 text-sm text-muted">
-          {isSeconds(tf) || SIZE[tf]! < 3600
+          {!market?.core && !isSeconds(tf)
+            ? `Fetching ${market?.name ?? "this market"}'s price history for the first time. It usually takes a minute or two, and the chart fills in by itself.`
+            : isSeconds(tf) || SIZE[tf]! < 3600
             ? "No bars here yet. Second and minute history fills in after the server's next price update."
             : "No prices loaded yet."}
         </p>

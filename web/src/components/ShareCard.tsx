@@ -111,7 +111,7 @@ async function render(d: ShareInput): Promise<HTMLCanvasElement> {
 
   g.fillStyle = "#6b7480";
   g.font = `400 15px ${font}`;
-  g.fillText(d.footnote ?? "Simulated on past gold prices with costs. Past results don't predict future ones. Education only, not advice.", 64, 592);
+  g.fillText(d.footnote ?? "Simulated on past market prices with costs. Past results don't predict future ones. Education only, not advice.", 64, 592);
   return cv;
 }
 

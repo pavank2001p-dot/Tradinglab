@@ -3,6 +3,7 @@
 Signals are computed on each bar's close and filled at the next bar's open, so a
 strategy never trades on information it could not have had. Stored prices are bids:
 longs buy at bid + spread and sell at bid; shorts sell at bid and buy back at bid + spread.
+Money is in US dollars: moves of a market quoted in another currency are converted at Instrument.usd.
 """
 
 import logging
@@ -864,6 +865,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     target = signals(cfg.strategy, cfg.params, bars, cfg.rules)
     allow = {"both": (1, -1), "long_only": (1,), "short_only": (-1,)}[cfg.direction]
     base_sp, u = cfg.spread, cfg.units
+    mkt = cfg.market
     sp, slip = base_sp, 0.0
     bar_len = 3600 if cfg.tf == "1h" else 86400
     # The spread given is scaled the same way the market's own spread would be.
@@ -886,7 +888,8 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         exit_px = bid if pos == 1 else bid + sp
         # Longs pay the spread when they buy, shorts when they buy back; slippage on a stop comes on top.
         paid = (entry_cost if pos == 1 else sp) + slip_paid
-        gross = (exit_px - entry) * u * pos
+        fx = mkt.usd(exit_px)  # dollars per unit of the market's quote currency
+        gross = (exit_px - entry) * u * pos * fx
         pnl = gross + swap_acc
         cash += pnl
         trades.append({
@@ -896,7 +899,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
             "entry_price": round(entry, 3),
             "exit_time": t,
             "exit_price": round(exit_px, 3),
-            "costs": round(paid * u, 2),
+            "costs": round(paid * u * fx, 2),
             "swap": round(swap_acc, 2),
             "pnl": round(pnl, 2),
             "exit_reason": reason,
@@ -907,14 +910,14 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         nonlocal pos, entry, entry_t, entry_cost, u
         pos, entry, entry_t, entry_cost = side, (bid + sp if side == 1 else bid), t, sp
         if cfg.size_pct:
-            u = max(cash, 0) * cfg.size_pct / 100 / entry
+            u = max(cash, 0) * cfg.size_pct / 100 / (entry * mkt.usd(entry))
 
     for i in range(1, len(bars)):
         b, prev = bars[i], bars[i - 1]
         if cond is not None and cond.on:
             t0 = datetime.fromtimestamp(b["t"], timezone.utc)
             sp = cond.spread(cfg.market, t0) * scale if cfg.tf == "1h" else base_sp
-            slip = base_sp * fills.NEWS_SLIP_X if cond.news_between(t0, t0 + timedelta(seconds=bar_len)) else 0.0
+            slip = base_sp * fills.NEWS_SLIP_X if cond.news_between(t0, t0 + timedelta(seconds=bar_len), mkt) else 0.0
         # Overnight financing for each trading-day rollover the position was held through.
         if pos:
             nights = (trading_date(b["t"]) - trading_date(prev["t"])).days
@@ -957,7 +960,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         if pos:
             in_market += 1
             mark = b["c"] if pos == 1 else b["c"] + sp
-            equity.append((b["t"], cash + (mark - entry) * u * pos + swap_acc))
+            equity.append((b["t"], cash + (mark - entry) * u * pos * mkt.usd(mark) + swap_acc))
         else:
             equity.append((b["t"], cash))
 

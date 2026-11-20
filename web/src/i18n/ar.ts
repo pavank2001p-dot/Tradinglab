@@ -6,9 +6,9 @@ const ar: Record<string, string> = {
   "Practise": "تدرّب",
   "You": "أنت",
   "Chart": "الرسم البياني",
-  "Any market live, and gold back to 1833": "أي سوق مباشرة، والذهب منذ عام 1833",
+  "Every market live: commodities, forex, indices, stocks, ETFs, crypto": "كل الأسواق مباشرة: السلع والفوركس والمؤشرات والأسهم وصناديق المؤشرات والعملات المشفرة",
   "News and calendar": "الأخبار والتقويم",
-  "What's moving gold, and the Fed dates ahead": "ما الذي يحرّك الذهب، ومواعيد الفيدرالي القادمة",
+  "Headlines by market and sector, and the calendar ahead": "الأخبار حسب السوق والقطاع، والتقويم القادم",
   "Strategy finder": "باحث الاستراتيجيات",
   "Strategies that stayed inside your limits": "استراتيجيات بقيت ضمن حدودك",
   "Backtest": "اختبار تاريخي",
@@ -77,8 +77,8 @@ const ar: Record<string, string> = {
     "السعر الفوري بسعر صرف اليوم، قبل الضرائب والرسوم المحلية وأجور المصنعية.",
   "Rough exchange rate; today's rate couldn't be loaded.": "سعر صرف تقريبي؛ تعذّر تحميل سعر اليوم.",
   // Footer
-  "Trading Lab is an educational analysis tool. Nothing on this site is investment advice or a recommendation to buy or sell. Trading gold and other leveraged products carries a high risk of loss. Past performance and backtests do not guarantee future results. AI answers can be wrong.":
-    "Trading Lab أداة تحليل تعليمية. لا شيء في هذا الموقع يُعد نصيحة استثمارية أو توصية بالشراء أو البيع. ينطوي تداول الذهب والمنتجات ذات الرافعة المالية على مخاطر خسارة عالية. الأداء السابق والاختبارات التاريخية لا تضمن النتائج المستقبلية. قد تكون إجابات الذكاء الاصطناعي خاطئة.",
+  "Trading Lab is an educational analysis tool. Nothing on this site is investment advice or a recommendation to buy or sell. Trading leveraged products such as CFDs, forex and crypto carries a high risk of loss. Past performance and backtests do not guarantee future results. AI answers can be wrong.":
+    "Trading Lab أداة تحليل تعليمية. لا شيء في هذا الموقع يُعد نصيحة استثمارية أو توصية بالشراء أو البيع. ينطوي تداول المنتجات ذات الرافعة المالية مثل عقود الفروقات والفوركس والعملات المشفرة على مخاطر خسارة عالية. الأداء السابق والاختبارات التاريخية لا تضمن النتائج المستقبلية. قد تكون إجابات الذكاء الاصطناعي خاطئة.",
   "Read the full disclaimer": "اقرأ إخلاء المسؤولية كاملًا",
 };
 export default ar;

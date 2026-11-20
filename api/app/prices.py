@@ -3,7 +3,7 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Query
 
-from . import config, db
+from . import config, db, ingest
 from . import instruments as ins
 
 router = APIRouter(prefix="/prices", tags=["prices"])
@@ -11,30 +11,49 @@ router = APIRouter(prefix="/prices", tags=["prices"])
 MAX_BARS = 5000
 
 
-def market(symbol: str | None) -> ins.Instrument:
-    """The instrument for a request's symbol, or a 404 naming it."""
+def market(symbol: str | None, load: bool = True) -> ins.Instrument:
+    """The instrument for a request's symbol, or a 404 naming it. Opening a market that isn't loaded yet
+    starts loading it (see app.ingest.ensure)."""
     try:
-        return ins.get(symbol)
+        inst = ins.get(symbol)
     except KeyError:
         raise HTTPException(404, f"Unknown market {symbol}. See /prices/markets for the list.")
+    if load:
+        ingest.ensure(inst)
+    return inst
 
 
 @router.get("/markets")
 def markets():
-    """Every market on offer, grouped by asset class in display order, with its rules and latest price."""
+    """Every market on offer, by asset class in display order, with its rules, latest price and status:
+    ready, loading (its history is being fetched for the first time) or on_demand (loads when opened).
+    Markets the price feed doesn't carry are left out."""
+    syms = [i.symbol for i in ins.ENABLED]
     with db.conn() as c:
         rows = c.execute(
-            """SELECT DISTINCT ON (symbol) symbol, close, ts FROM candles WHERE tf = '1h' AND symbol = ANY(%s)
-               ORDER BY symbol, ts DESC""", ([i.symbol for i in ins.ENABLED],)).fetchall()
+            """SELECT s.symbol, l.close, l.ts FROM unnest(%s::text[]) AS s(symbol)
+               CROSS JOIN LATERAL (SELECT close, ts FROM candles WHERE symbol = s.symbol AND tf = '1h'
+                                   ORDER BY ts DESC LIMIT 1) l""", (syms,)).fetchall()
     last = {r["symbol"]: r for r in rows}
+    gone = ingest.unavailable_symbols()
     out = []
     for i in ins.ENABLED:
         r = last.get(i.symbol)
+        if i.symbol in gone and not r:
+            continue
+        status = "ready" if r else "loading" if i.symbol in ingest._loading else "on_demand"
         out.append({**i.public(), "price": r["close"] if r else None,
                     "as_of": int(r["ts"].timestamp()) if r else None,
                     "has_seconds": i.symbol in config.SECOND_SYMBOLS,
-                    "has_history": i.symbol == ins.GOLD.symbol})
+                    "has_history": i.symbol == ins.GOLD.symbol, "status": status})
     return {"default": ins.DEFAULT, "classes": ins.CLASSES, "markets": out}
+
+
+@router.post("/open")
+def open_market(symbol: str):
+    """Called when someone picks a market: loads its prices if this is the first time. Returns its status."""
+    inst = market(symbol, load=False)
+    return {"symbol": inst.symbol, "status": ingest.ensure(inst)}
 
 
 def _ts(v: int | None) -> datetime | None:
@@ -94,7 +113,10 @@ def candles(
             rows = _with_history(c, rows, where, args, order, limit)
     if order == "DESC":
         rows.reverse()
-    return {"symbol": inst.symbol, "tf": tf, "bars": rows}
+    out = {"symbol": inst.symbol, "tf": tf, "bars": rows}
+    if not rows:
+        out["status"] = ingest.status(inst)  # "loading" while a market opened for the first time is fetched
+    return out
 
 
 def _with_history(c, rows: list[dict], where: list[str], args: list, order: str, limit: int) -> list[dict]:
@@ -140,7 +162,8 @@ def summary(symbol: str = config.SYMBOL):
     source = db.get_meta(key("price_source")) or "none"
     updated = db.get_meta(key("prices_updated_at"))
     if not last:
-        return {"symbol": inst.symbol, "name": inst.name, "price": None, "source": source}
+        return {"symbol": inst.symbol, "name": inst.name, "price": None, "source": source,
+                "status": ingest.status(inst)}
     change = last["close"] - prev["close"] if prev else None
     return {
         "symbol": inst.symbol,

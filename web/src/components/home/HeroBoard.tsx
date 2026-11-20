@@ -6,7 +6,7 @@ import { api, type Bar, type Market } from "@/lib/api";
 import { fmtMarketPrice, labName, ticker, useMarkets } from "@/lib/markets";
 
 /** One market from four different labs, so the first screen already shows the range on offer. */
-const PICKS = ["XAUUSD", "USA500IDXUSD", "EURUSD", "BTCUSD"];
+const PICKS = ["USA500IDXUSD", "EURUSD", "XAUUSD", "BTCUSD"];
 const TONES: Record<string, string> = {
   metals: "var(--gold)", energy: "var(--gold)", indices: "var(--calm)", forex: "var(--up)", stocks: "var(--rose)", crypto: "var(--violet)",
 };

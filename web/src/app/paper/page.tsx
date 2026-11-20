@@ -13,7 +13,7 @@ import {
   api, fmtUsd, type Market, type PaperOrder, type PaperOrderInput, type PaperPosition, type PaperState, type Report, type RiskProfile,
 } from "@/lib/api";
 import MarketPicker from "@/components/markets/MarketPicker";
-import { GOLD, unitsLabel, useMarket } from "@/lib/markets";
+import { GOLD, toUsd, unitsLabel, useMarket } from "@/lib/markets";
 import AccountSetup, { SETUP_KEY } from "@/components/paper/AccountSetup";
 import RulePanel from "@/components/prop/RulePanel";
 import LeveragePicker, { shortUsd } from "@/components/paper/LeveragePicker";
@@ -299,13 +299,15 @@ function Ticket({ state, market, profile, onPlaced, busy, setBusy }: {
   const slN = trailStart == null ? slSet : slSet == null ? trailStart : long ? Math.max(slSet, trailStart) : Math.min(slSet, trailStart);
   const limit = profile?.max_risk_per_trade_pct ?? 1;
   const riskWanted = Number(riskIn) || 0;
-  const byRisk = sizeBy === "risk" && entry != null && slN != null && entry !== slN && riskWanted > 0
-    ? Math.max(Math.floor(((state.account.equity * riskWanted) / 100 / Math.abs(entry - slN)) * 100) / 100, 0.01) : null;
+  // Dollars per unit of the market's quote currency (1 for dollar-quoted markets; yen, euros... are converted).
+  const fx = toUsd(market, entry);
+  const byRisk = sizeBy === "risk" && entry != null && slN != null && entry !== slN && riskWanted > 0 && fx > 0
+    ? Math.max(Math.floor(((state.account.equity * riskWanted) / 100 / (Math.abs(entry - slN) * fx)) * 100) / 100, 0.01) : null;
   const u = sizeBy === "risk" ? (byRisk ?? 0) : Number(units) || 0;
-  const risk = entry != null && slN != null ? Math.abs(entry - slN) * u : null;
-  const reward = entry != null && tpN != null ? Math.abs(tpN - entry) * u : null;
+  const risk = entry != null && slN != null ? Math.abs(entry - slN) * u * fx : null;
+  const reward = entry != null && tpN != null ? Math.abs(tpN - entry) * u * fx : null;
   const riskPct = risk != null && state.account.equity > 0 ? (risk / state.account.equity) * 100 : null;
-  const margin = entry != null ? u * entry * (state.settings.margin_rate_pct / 100) : null;
+  const margin = entry != null ? u * entry * fx * (state.settings.margin_rate_pct / 100) : null;
   const over = riskPct != null && riskPct > limit + 0.05;
 
   // Sensible starting values whenever the side, type or price changes.
@@ -326,7 +328,7 @@ function Ticket({ state, market, profile, onPlaced, busy, setBusy }: {
 
   function sizeByRisk() {
     if (entry == null || slN == null || entry === slN) return;
-    const oz = (state.account.equity * limit) / 100 / Math.abs(entry - slN);
+    const oz = (state.account.equity * limit) / 100 / (Math.abs(entry - slN) * toUsd(market, entry));
     setUnits(String(Math.max(Math.floor(oz * 100) / 100, 0.01)));
     setSizeBy("units");
   }
@@ -432,7 +434,7 @@ function Ticket({ state, market, profile, onPlaced, busy, setBusy }: {
           ))}
           {entry != null && state.account.free_margin > 0 && (
             <button type="button" title={`The most your free margin allows at 1:${state.settings.market_leverage ?? state.account.leverage}`}
-              onClick={() => setUnits(String(Math.max(Math.floor((state.account.free_margin / (entry * state.settings.margin_rate_pct / 100)) * 100) / 100, 0.01)))}
+              onClick={() => setUnits(String(Math.max(Math.floor((state.account.free_margin / (entry * toUsd(market, entry) * state.settings.margin_rate_pct / 100)) * 100) / 100, 0.01)))}
               className="rounded-full border border-border px-2.5 py-0.5 text-xs text-muted transition hover:border-gold hover:text-foreground">
               Max
             </button>
@@ -849,7 +851,7 @@ export default function PaperPage() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-8">
       <PageHeader icon="wallet" title="Paper trading"
-        subtitle="Practise trading gold, currencies, indices, stocks and crypto with virtual money on real prices. Orders fill at the real bid and ask, with spread and overnight swap, but no real money or broker is involved."
+        subtitle="Practise trading commodities, currencies, indices, stocks, ETFs and crypto with virtual money on real prices. Orders fill at the real bid and ask, with spread and overnight swap, but no real money or broker is involved."
         right={
           <div className="flex flex-wrap items-center gap-2">
             <MarketPicker market={market} markets={markets} onChange={setSymbol} />

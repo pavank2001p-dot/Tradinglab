@@ -320,7 +320,7 @@ function Result({ p, profiles, onRetake }: { p: RiskProfile; profiles: Record<st
           <ul className="mt-4 space-y-3 text-sm">
             <li className="flex gap-3">
               <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-gold" />
-              <span>Lose at most <b className="tabular-nums">${riskUsd.toLocaleString()}</b> on any one trade. With a $20 stop on gold that is about <b className="tabular-nums">{(riskUsd / 20).toFixed(1)} oz</b>.</span>
+              <span>Lose at most <b className="tabular-nums">${riskUsd.toLocaleString()}</b> on any one trade. With a stop $5 away on a $100 stock that is about <b className="tabular-nums">{Math.floor(riskUsd / 5).toLocaleString()} shares</b>.</span>
             </li>
             <li className="flex gap-3">
               <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-gold" />
@@ -328,7 +328,7 @@ function Result({ p, profiles, onRetake }: { p: RiskProfile; profiles: Record<st
             </li>
             <li className="flex gap-3">
               <span className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-gold" />
-              <span>Keep open positions under <b className="tabular-nums">${(account * p.max_leverage).toLocaleString()}</b> of gold in total.</span>
+              <span>Keep open positions under <b className="tabular-nums">${(account * p.max_leverage).toLocaleString()}</b> in total, across every market.</span>
             </li>
           </ul>
         </section>

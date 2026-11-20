@@ -13,6 +13,8 @@ export type Summary = {
   hourly_bars?: number;
   source: string;
   updated_at?: string | null;
+  /** When there is no price yet: "loading" while a market opened for the first time is fetched. */
+  status?: "ready" | "loading" | "on_demand" | "unavailable";
 };
 
 export type Market = {
@@ -22,6 +24,12 @@ export type Market = {
   price: number | null; as_of: number | null; has_seconds: boolean; has_history: boolean;
   /** Smallest price step, its value in USD on one lot, and whether the market trades at weekends (crypto). */
   tick?: number; tick_value?: number; weekends?: boolean;
+  /** Sector, region or kind inside the asset class ("Technology", "Majors", "Europe"), short code and search words. */
+  group?: string; ticker?: string; tags?: string[];
+  /** The currency prices are in. P&L converts to dollars at 1 / price for USD/xxx pairs (base_usd), else at usd_rate. */
+  quote?: string; base_usd?: boolean; usd_rate?: number | null;
+  /** Kept up to date all the time (core), or loaded the first time someone opens it. */
+  core?: boolean; status?: "ready" | "loading" | "on_demand";
 };
 export type MarketList = { default: string; classes: Record<string, string>; markets: Market[] };
 
@@ -207,6 +215,8 @@ export type BacktestSummary = { id: number; created_at: string; params: Backtest
 
 export type Trade = {
   id: number;
+  /** The market (gold for trades logged before the log covered every market). */
+  symbol?: string;
   side: "long" | "short";
   units: number;
   open_time: string;
@@ -234,6 +244,8 @@ export type NewsItem = {
   relevance: number;
   impact: "bullish" | "bearish" | "neutral" | null;
   reason: string | null;
+  /** Markets the headline names, "class" and "class:group" sector keys, and the market its tag is for. */
+  symbols?: string[]; sectors?: string[]; focus?: string | null; focus_name?: string | null;
 };
 export type NewsFeed = { configured: boolean; tagging: boolean; items: NewsItem[] };
 export type CalendarEvent = {
@@ -713,8 +725,8 @@ export const api = {
   funnel: (weeks = 8, days = 30) => call<Funnel>(`/analytics/funnel?weeks=${weeks}&days=${days}`),
   setPref: (key: "drawings" | "indicators" | "chart_events" | "trading" | "mirror", value: unknown) =>
     call<{ ok: boolean }>(`/prefs/${key}`, { method: "PUT", body: JSON.stringify({ value }) }),
-  markers: (start: number, end: number, scheduled = true) =>
-    call<ChartMarker[]>(`/calendar/markers?start=${start}&end=${end}&scheduled=${scheduled}`),
+  markers: (start: number, end: number, scheduled = true, symbol?: string) =>
+    call<ChartMarker[]>(`/calendar/markers?start=${start}&end=${end}&scheduled=${scheduled}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`),
   alerts: () => call<PriceAlert[]>("/practice/alerts"),
   addAlert: (price: number, note = "", symbol?: string) =>
     call<PriceAlert>("/practice/alerts", { method: "POST", body: JSON.stringify({ price, note, ...(symbol ? { symbol } : {}) }) }),
@@ -775,6 +787,8 @@ export const api = {
     call<{ verified: boolean; email: string }>("/auth/verify", { method: "POST", body: JSON.stringify({ token }) }),
   resendVerification: () => call<{ sent: boolean; already_verified?: boolean }>("/auth/verify/resend", { method: "POST" }),
   markets: () => call<MarketList>("/prices/markets"),
+  openMarket: (symbol: string) =>
+    call<{ symbol: string; status: "ready" | "loading" | "on_demand" | "unavailable" }>(`/prices/open?symbol=${encodeURIComponent(symbol)}`, { method: "POST" }),
   summary: (symbol?: string) => call<Summary>(withSym("/prices/summary", symbol)),
   live: (symbol?: string) => call<LiveQuote>(withSym("/prices/live", symbol)),
   fx: () => call<FxRates>("/fx"),
@@ -795,8 +809,14 @@ export const api = {
   addTrade: (t: TradeInput) => call<Trade>("/trades", { method: "POST", body: JSON.stringify(t) }),
   deleteTrade: (id: number) => call<void>(`/trades/${id}`, { method: "DELETE" }),
   tradeReport: (capital: number) => call<Report>(`/trades/report?capital=${capital}`),
-  news: (goldOnly = false) => call<NewsFeed>(`/news?limit=100${goldOnly ? "&gold_only=true" : ""}`),
-  calendar: (days = 14) => call<CalendarEvent[]>(`/calendar?days=${days}`),
+  news: (f: { symbol?: string; sector?: string } = {}) => {
+    const q = new URLSearchParams({ limit: "100" });
+    if (f.symbol) q.set("symbol", f.symbol);
+    if (f.sector) q.set("sector", f.sector);
+    return call<NewsFeed>(`/news?${q}`);
+  },
+  calendar: (days = 14, symbol?: string) =>
+    call<CalendarEvent[]>(`/calendar?days=${days}${symbol ? `&symbol=${encodeURIComponent(symbol)}` : ""}`),
   riskQuiz: () => call<{ questions: RiskQuestion[]; categories: Record<string, RiskCategory>; profiles: Record<string, RiskLimits> }>("/risk/quiz"),
   riskProfile: () => call<RiskProfile>("/risk/profile"),
   saveRiskProfile: (answers: Record<string, number>) =>
@@ -848,8 +868,8 @@ export const api = {
   agentStop: (close_position: boolean) => call<AgentState>("/agent/stop", { method: "POST", body: JSON.stringify({ close_position }) }),
   agentCoach: (situation: string) => call<{ id: number }>("/agent/coach", { method: "POST", body: JSON.stringify({ situation }) }),
   assistantStatus: () => call<AssistantStatus>("/assistant/status"),
-  ask: (question: string, history: Turn[]) =>
-    call<{ id: number }>("/assistant/questions", { method: "POST", body: JSON.stringify({ question, history }) }),
+  ask: (question: string, history: Turn[], symbol?: string) =>
+    call<{ id: number }>("/assistant/questions", { method: "POST", body: JSON.stringify({ question, history, symbol }) }),
   answer: (id: number) => call<AssistantAnswer>(`/assistant/questions/${id}`),
   importTrades: (file: File, contractSize: number) => {
     const f = new FormData();

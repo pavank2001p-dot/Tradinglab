@@ -146,7 +146,7 @@ def simulate(cfg: ScenarioIn, moves: list[tuple[float, float, float]], start: da
                 exit_px, reason = px, "open"
             if reason:
                 out = exit_px if side == 1 else exit_px + sp
-                pnls.append((out - fill) * u * side + swap * u * (i + 1))
+                pnls.append((out - fill) * u * side * mk.usd(out) + swap * u * (i + 1))
                 held.append(i + 1)
                 exits[reason] += 1
                 done = True
@@ -183,7 +183,7 @@ def simulate(cfg: ScenarioIn, moves: list[tuple[float, float, float]], start: da
     loss_at_stop = None
     if cfg.stop is not None:
         # A long sells at the stop; a short buys back at it (the ask), so the spread is already inside.
-        loss_at_stop = round(abs(cfg.stop - fill) * u, 2)
+        loss_at_stop = round(abs(cfg.stop - fill) * u * mk.usd(cfg.stop), 2)
 
     daily_sd = math.sqrt(sum((m[0] - drift) ** 2 for m in moves) / len(moves))
     yd = mk.year_days
@@ -206,8 +206,8 @@ def simulate(cfg: ScenarioIn, moves: list[tuple[float, float, float]], start: da
         },
         "loss_at_stop": loss_at_stop,
         "loss_at_stop_pct": None if loss_at_stop is None else round(loss_at_stop / cfg.capital * 100, 2),
-        "position_value": round(entry * u, 2),
-        "leverage": round(entry * u / cfg.capital, 2),
+        "position_value": round(entry * u * mk.usd(entry), 2),
+        "leverage": round(entry * u * mk.usd(entry) / cfg.capital, 2),
         "history": {
             "days": len(moves),
             "yearly_volatility_pct": round(daily_sd * math.sqrt(yd) * 100, 1),

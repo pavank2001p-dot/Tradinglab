@@ -6,13 +6,15 @@ import Rich from "@/components/Rich";
 import SignInPrompt from "@/components/SignInPrompt";
 import { Icon, PageHeader } from "@/components/ui";
 import { api, ApiError, type AssistantStatus, type Turn } from "@/lib/api";
+import { useMarket } from "@/lib/markets";
 import { useUser } from "@/lib/useUser";
 
 const STORE = "goldlab-assistant";
 const HISTORY_TURNS = 10;
 
 const SUGGESTIONS = [
-  { icon: "candles", text: "How has gold moved this year?" },
+  { icon: "candles", text: "How has the market I'm looking at moved this year?" },
+  { icon: "news", text: "What's in the news for bank stocks this week?" },
   { icon: "risk", text: "Does my latest backtest fit my risk profile?" },
   { icon: "backtest", text: "Backtest a 20/50 moving-average crossover since 2015 with a 2% stop loss." },
   { icon: "bolt", text: "Build me a strategy that buys dips in an uptrend, test it and save it." },
@@ -41,6 +43,7 @@ const TOOL_LABELS: Record<string, string> = {
   my_risk_profile: "your risk profile",
   profile_fit: "profile fit",
   gold_news: "news",
+  market_news: "news",
   economic_calendar: "event calendar",
   my_agent: "your strategy agent",
   diagnose_strategy: "tested a strategy",
@@ -52,6 +55,7 @@ const TOOL_LABELS: Record<string, string> = {
 type Msg = Turn & { tools?: string[]; failed?: boolean };
 
 export default function AssistantPage() {
+  const [market] = useMarket();
   const { user } = useUser();
   const [status, setStatus] = useState<AssistantStatus | null>(null);
   const [msgs, setMsgs] = useState<Msg[]>([]);
@@ -76,7 +80,7 @@ export default function AssistantPage() {
     end.current?.scrollIntoView({ behavior: "smooth", block: "end" });
   }, [msgs, waiting]);
 
-  if (user === null) return <SignInPrompt what="ask the AI assistant about gold and your results" next="/assistant" />;
+  if (user === null) return <SignInPrompt what="ask the AI assistant about any market and your results" next="/assistant" />;
   if (user === undefined) return null;
 
   async function send(question: string) {
@@ -89,7 +93,7 @@ export default function AssistantPage() {
       if (msgs[i].role === "user" && msgs[i + 1].role === "assistant" && !msgs[i + 1].failed)
         history.push({ role: "user", content: msgs[i].content }, { role: "assistant", content: msgs[i + 1].content });
     try {
-      const { id } = await api.ask(question, history.slice(-HISTORY_TURNS));
+      const { id } = await api.ask(question, history.slice(-HISTORY_TURNS), market.symbol);
       setMsgs((m) => [...m, { role: "user", content: question }]);
       setQ("");
       setWaiting(true);
@@ -116,7 +120,7 @@ export default function AssistantPage() {
   return (
     <div className="mx-auto flex max-w-3xl flex-col px-4 py-8">
       <PageHeader icon="assistant" title="AI assistant"
-        subtitle="Ask about gold prices, strategies, your backtests, your trade log or the news, or ask it to build and test a strategy for you. It looks up every number on this site rather than guessing. It explains; it never tells you to buy or sell."
+        subtitle="Ask about any market's prices, strategies, your backtests, your trade log or the news, or ask it to build and test a strategy for you. It looks up every number on this site rather than guessing. It explains; it never tells you to buy or sell."
         right={status?.configured ? (
           <div className="w-full sm:w-40">
             <p className="text-right text-xs tabular-nums text-muted">{status.remaining} of {status.limit} left today</p>
@@ -207,7 +211,7 @@ export default function AssistantPage() {
               }}
               rows={2}
               maxLength={2000}
-              placeholder={status?.remaining === 0 ? "You've used today's questions. Back tomorrow (midnight UTC)." : "Ask about gold or your results…"}
+              placeholder={status?.remaining === 0 ? "You've used today's questions. Back tomorrow (midnight UTC)." : "Ask about any market or your results…"}
               disabled={waiting || status?.remaining === 0}
               className="min-w-0 flex-1 resize-none rounded-2xl border border-border bg-surface px-3.5 py-2.5 text-base outline-none transition focus:border-gold focus:shadow-[0_0_0_3px_color-mix(in_srgb,var(--gold)_15%,transparent)] sm:text-sm"
             />
