@@ -30,6 +30,9 @@ export type Market = {
   quote?: string; base_usd?: boolean; usd_rate?: number | null;
   /** Kept up to date all the time (core), or loaded the first time someone opens it. */
   core?: boolean; status?: "ready" | "loading" | "on_demand";
+  /** Default trading costs beyond the spread: commission per side (% of value, USD per unit, USD minimum per
+   *  order) and how far a market order fills past the quote, in price units. */
+  commission_pct?: number; commission_per_unit?: number; commission_min?: number; slippage?: number;
 };
 export type MarketList = { default: string; classes: Record<string, string>; markets: Market[] };
 
@@ -156,6 +159,7 @@ export type Stats = {
   longest_losing_streak: number;
   total_costs: number;
   total_swap: number;
+  total_commission?: number;
   buy_and_hold_pct?: number;
   time_in_market_pct?: number;
   bars?: number;
@@ -206,6 +210,11 @@ export type BacktestParams = {
   size_pct?: number | null;
   /** Wider spreads at the rollover and around big releases, and stops that slip around releases. */
   realistic_fills?: boolean;
+  /** Commission per side (empty = the market's default) and market-order slippage in price units. */
+  commission_pct?: number | null;
+  commission_per_unit?: number | null;
+  commission_min?: number | null;
+  slippage?: number | null;
   /** The last part of the period, in %, reported on its own as data the strategy wasn't tuned on. */
   holdout_pct?: number;
 };

@@ -80,7 +80,8 @@ def test_backtest_uses_the_markets_costs(client):
     rep = backtest.run(cfg, backtest.load_bars("1d", cfg.start, cfg.end, "EURUSD"))
     assert rep["stats"]["trades"] > 0
     t = rep["trades"][0]
-    assert t["costs"] == round(EUR.spread * EUR.default_units, 2)
+    # The spread once, plus slippage on the market entry and the market exit (forex is spread-only, no commission).
+    assert t["costs"] == round((EUR.spread + 2 * EUR.market_slippage) * EUR.default_units, 2) and t["commission"] == 0
     signup(client)
     r = client.post("/backtests", json={"strategy": "ma_cross", "symbol": "EURUSD", "start": "2024-01-01", "end": "2025-01-01"})
     assert r.status_code == 201 and r.json()["params"]["symbol"] == "EURUSD"

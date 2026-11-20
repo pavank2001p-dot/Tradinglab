@@ -777,6 +777,15 @@ class BacktestIn(BaseModel):
     swap_long: float | None = Field(None, ge=-10_000, le=10_000, description=(
         "USD per unit per night held long (negative = cost); default is the market's financing rate"))
     swap_short: float | None = Field(None, ge=-10_000, le=10_000, description="USD per unit per night held short")
+    commission_pct: float | None = Field(None, ge=0, le=5, description=(
+        "Commission as a % of the trade's value, charged on entry and again on exit; default is the market's"))
+    commission_per_unit: float | None = Field(None, ge=0, le=10_000, description=(
+        "Commission in USD per unit, charged on entry and again on exit; default is the market's"))
+    commission_min: float | None = Field(None, ge=0, le=10_000, description=(
+        "The least one order's commission can be, in USD; default is the market's"))
+    slippage: float | None = Field(None, ge=0, le=100_000, description=(
+        "Price units a market order (signal entry or exit, stop loss) fills past the quote; take profits are "
+        "limit orders and don't slip. Default is the market's typical slippage"))
     stop_loss_pct: float | None = Field(None, gt=0, le=50)
     take_profit_pct: float | None = Field(None, gt=0, le=200)
     holdout_pct: float = Field(robust.DEFAULT_HOLDOUT_PCT, ge=0, le=50, description=(
@@ -806,6 +815,11 @@ class BacktestIn(BaseModel):
             self.units = m.default_units
         if self.spread is None:
             self.spread = m.spread
+        for key in ("commission_pct", "commission_per_unit", "commission_min"):
+            if getattr(self, key) is None:
+                setattr(self, key, m.cost(key))
+        if self.slippage is None:
+            self.slippage = m.market_slippage
         if self.strategy == "custom":
             if self.rules is None:
                 raise ValueError("A custom strategy needs its rules")
@@ -871,11 +885,18 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     # The spread given is scaled the same way the market's own spread would be.
     scale = base_sp / cfg.market.spread if cfg.market.spread else 1.0
     slipped = 0
+    mslip = cfg.slippage or 0.0  # every market order fills this far past the quote
+
+    def fee(units: float, price: float) -> float:
+        # The percentage is of the trade's value in dollars.
+        return ins.commission_for(units, price * mkt.usd(price), cfg.commission_pct or 0.0, cfg.commission_per_unit or 0.0,
+                                  cfg.commission_min or 0.0)
 
     cash = cfg.capital
     pos = 0  # 1 long, -1 short
     entry = entry_t = 0.0
-    entry_cost = 0.0  # spread paid on the way in, per unit
+    entry_cost = 0.0  # spread and slippage paid on the way in, per unit
+    entry_fee = 0.0   # commission paid on the way in, USD
     swap_acc = 0.0
     blocked = 0  # side stopped out; wait for the signal to change before re-entering
     trades: list[dict] = []
@@ -883,14 +904,18 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     in_market = 0
     wiped_out = False
 
-    def close(t: int, bid: float, reason: str, slip_paid: float = 0.0):
+    def close(t: int, bid: float, reason: str, slip_paid: float = 0.0, market: bool = True):
         nonlocal cash, pos, swap_acc
-        exit_px = bid if pos == 1 else bid + sp
-        # Longs pay the spread when they buy, shorts when they buy back; slippage on a stop comes on top.
-        paid = (entry_cost if pos == 1 else sp) + slip_paid
+        # A market order (signal, stop, end of test) slips against the position; a take profit is a limit order.
+        extra = mslip if market else 0.0
+        exit_px = bid - extra if pos == 1 else bid + sp + extra
+        # Longs pay the spread when they buy, shorts when they buy back; slippage comes on top.
+        paid = entry_cost + (0.0 if pos == 1 else sp) + slip_paid + extra
         fx = mkt.usd(exit_px)  # dollars per unit of the market's quote currency
+        exit_fee = fee(u, exit_px)
+        commission = entry_fee + exit_fee
         gross = (exit_px - entry) * u * pos * fx
-        pnl = gross + swap_acc
+        pnl = gross + swap_acc - commission
         cash += pnl
         trades.append({
             "side": "long" if pos == 1 else "short",
@@ -899,7 +924,8 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
             "entry_price": round(entry, 3),
             "exit_time": t,
             "exit_price": round(exit_px, 3),
-            "costs": round(paid * u * fx, 2),
+            "costs": round(paid * u * fx + commission, 2),
+            "commission": round(commission, 2),
             "swap": round(swap_acc, 2),
             "pnl": round(pnl, 2),
             "exit_reason": reason,
@@ -907,10 +933,12 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         pos, swap_acc = 0, 0.0
 
     def open_(t: int, bid: float, side: int):
-        nonlocal pos, entry, entry_t, entry_cost, u
-        pos, entry, entry_t, entry_cost = side, (bid + sp if side == 1 else bid), t, sp
+        nonlocal pos, entry, entry_t, entry_cost, entry_fee, u
+        entry = bid + sp + mslip if side == 1 else bid - mslip
+        pos, entry_t, entry_cost = side, t, (sp if side == 1 else 0.0) + mslip
         if cfg.size_pct:
             u = max(cash, 0) * cfg.size_pct / 100 / (entry * mkt.usd(entry))
+        entry_fee = fee(u, entry)
 
     for i in range(1, len(bars)):
         b, prev = bars[i], bars[i - 1]
@@ -945,7 +973,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
                     slipped += slip > 0
                     close(b["t"], min(b["o"], stop) - slip, "stop_loss", slip)
                 elif take is not None and b["h"] >= take:
-                    close(b["t"], max(b["o"], take), "take_profit")
+                    close(b["t"], max(b["o"], take), "take_profit", market=False)
             else:  # short exits buy at the ask, i.e. bid + spread
                 stop = entry * (1 + cfg.stop_loss_pct / 100) if cfg.stop_loss_pct else None
                 take = entry * (1 - cfg.take_profit_pct / 100) if cfg.take_profit_pct else None
@@ -953,14 +981,14 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
                     slipped += slip > 0
                     close(b["t"], max(b["o"] + sp, stop) - sp + slip, "stop_loss", slip)
                 elif take is not None and b["l"] + sp <= take:
-                    close(b["t"], min(b["o"] + sp, take) - sp, "take_profit")
+                    close(b["t"], min(b["o"] + sp, take) - sp, "take_profit", market=False)
             if not pos:
                 blocked = side
 
         if pos:
             in_market += 1
             mark = b["c"] if pos == 1 else b["c"] + sp
-            equity.append((b["t"], cash + (mark - entry) * u * pos * mkt.usd(mark) + swap_acc))
+            equity.append((b["t"], cash + (mark - entry) * u * pos * mkt.usd(mark) + swap_acc - entry_fee))
         else:
             equity.append((b["t"], cash))
 

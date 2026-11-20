@@ -85,5 +85,6 @@ def build_report(trades: list[dict], equity: list[tuple[int, float]], capital: f
         "longest_losing_streak": worst_streak,
         "total_costs": r2(sum(t.get("costs", 0) for t in closed)),
         "total_swap": r2(sum(t.get("swap", 0) for t in closed)),
+        "total_commission": r2(sum(t.get("commission", 0) for t in closed)),
     }
     return {"stats": stats, "equity": _downsample(curve), "trades": trades}

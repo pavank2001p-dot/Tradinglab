@@ -174,3 +174,14 @@ def test_trade_log_covers_every_market(client):
     r = client.post("/trades", json={"symbol": "EURUSD", "side": "long", "units": 10000, "open_time": "2026-01-01T10:00:00Z",
                                      "open_price": 1.1})
     assert r.status_code == 201 and r.json()["symbol"] == "EURUSD"
+
+
+def test_commission_on_value_is_in_dollars():
+    # A percentage commission is of the trade's value in dollars, whatever currency the market is quoted in.
+    from dataclasses import replace
+    dax = replace(DAX, commission_pct=0.1, commission_per_unit=0.0, commission_min=0.0)
+    assert dax.commission(1, 18000) == pytest.approx(18000 * 0.001 / fx.FALLBACK["EUR"])
+    jpy = replace(JPY, commission_pct=0.01, commission_per_unit=0.0, commission_min=0.0)
+    assert jpy.commission(100_000, 150) == pytest.approx(100_000 * 0.0001)
+    # Every class has cost defaults, so every new market gets them.
+    assert all(i.asset_class in instruments.COSTS for i in instruments.ALL)
