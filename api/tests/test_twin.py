@@ -16,7 +16,8 @@ def candle(ts, h, l):
 def test_clean_trades_match(client):
     signup(client)
     u = uid(client)
-    t0 = NOW - timedelta(days=2)
+    # Midday, so both trades fall on the same UTC day whatever time the suite runs.
+    t0 = (NOW - timedelta(days=2)).replace(hour=12, minute=0, second=0, microsecond=0)
     trade(u, t0, t0 + timedelta(minutes=20), -10)
     trade(u, t0 + timedelta(hours=2), t0 + timedelta(hours=3), 25)
     r = client.get("/coach/twin").json()

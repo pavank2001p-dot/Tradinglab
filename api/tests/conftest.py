@@ -2,6 +2,8 @@ import os
 
 os.environ.setdefault("DATABASE_URL", "postgresql://gold:gold@localhost:5432/gold_test")
 os.environ["EMAIL_PROVIDER"] = "console"
+# Day-trading markets keep months of minute bars; tests that need that set it themselves.
+os.environ.setdefault("INTRADAY_SYMBOLS", "")
 
 import pytest
 from fastapi.testclient import TestClient

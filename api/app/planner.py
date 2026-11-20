@@ -6,7 +6,7 @@ re-run, unchanged, on the last 30%, which the choice never saw. Everything here 
 results on real prices. It is education, not a recommendation to trade."""
 
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -105,6 +105,14 @@ def _window(tf: str, years: int, symbol: str = config.SYMBOL) -> tuple[list[dict
     bars = load_bars(tf, start, None, symbol)
     if len(bars) < 300:
         raise HTTPException(422, "Not enough price history for that period on this market yet. Try fewer years.")
+    first = datetime.fromtimestamp(bars[0]["t"], timezone.utc).date()
+    if first > start + timedelta(days=120):
+        # Don't quietly test a shorter period than the one asked for: the feed starts this market later.
+        have = (date.today() - first).days / 365.25
+        fits = [y for y in YEARS[tf] if y <= have]
+        hint = f"Pick {fits[-1]} years or fewer." if fits else "Try hourly candles or another market."
+        raise HTTPException(422, f"Prices for {instruments.get(symbol).name} only go back to {first:%B %Y} "
+                                 f"(about {have:.0f} years). {hint}")
     cut = int(len(bars) * IN_SAMPLE)
     return bars, bars[:cut], bars[cut:]
 

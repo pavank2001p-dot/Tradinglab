@@ -443,28 +443,44 @@ def _keeps_seconds(inst: Instrument) -> bool:
     return inst.symbol in config.SECOND_SYMBOLS
 
 
+def minute_days(inst: Instrument) -> int:
+    """How many days of minute bars a market keeps: more for the day-trading markets (INTRADAY_SYMBOLS)."""
+    days = config.MINUTE_DAYS if inst.symbol == GOLD.symbol else min(config.MINUTE_DAYS, config.MARKET_MINUTE_DAYS)
+    return max(days, config.INTRADAY_DAYS) if inst.symbol in config.INTRADAY_SYMBOLS else days
+
+
 def load_fine(source: str, inst: Instrument = GOLD) -> int:
     """Bring minute and second bars up to date and drop those past their retention window."""
     now = datetime.now(UTC)
     total = 0
     for tf, days, step, fetch in (
-        ("1m", config.MINUTE_DAYS if inst.symbol == GOLD.symbol else min(config.MINUTE_DAYS, config.MARKET_MINUTE_DAYS),
-         60, dukascopy_minutes),
+        ("1m", minute_days(inst), 60, dukascopy_minutes),
         ("1s", config.SECOND_DAYS if _keeps_seconds(inst) else 0, 1, dukascopy_seconds),
     ):
         if days <= 0:
             continue
         floor = now - timedelta(days=days)
+        fetch_range = (lambda a, b: fetch(a, b, inst)) if source == "dukascopy" else (lambda a, b: sample_fine(a, b, step, inst))
         # Track how far this feed has got separately from what is stored: live quotes also
         # write recent bars, and must not make this skip hours it hasn't fetched yet.
         key = _key(f"fine_{source}_{tf}", inst)
         done = db.get_meta(key)
+        # The oldest day fetched. When the window has grown since (a market added to INTRADAY_SYMBOLS),
+        # the older part is fetched once, so the bars run back to the new floor without a hole.
+        from_key = _key(f"fine_from_{source}_{tf}", inst)
+        fetched_from = db.get_meta(from_key)
+        if done:
+            oldest = datetime.fromisoformat(fetched_from) if fetched_from else _oldest(inst, tf) or now
+            if oldest > floor + timedelta(days=1):
+                for chunk in fetch_range(floor, oldest):
+                    total += upsert(chunk, tf, inst.symbol)
         # Re-fetch the hour before too, in case the feed published it late.
         start = max(floor, datetime.fromisoformat(done) - timedelta(hours=1)) if done else floor
-        chunks = fetch(start, now, inst) if source == "dukascopy" else sample_fine(start, now, step, inst)
-        for chunk in chunks:
+        for chunk in fetch_range(start, now):
             total += upsert(chunk, tf, inst.symbol)
         db.set_meta(key, now.replace(minute=0, second=0, microsecond=0).isoformat())
+        if not fetched_from or datetime.fromisoformat(fetched_from) > floor:
+            db.set_meta(from_key, floor.isoformat())
         with db.conn() as c:
             c.execute("DELETE FROM candles WHERE symbol = %s AND tf = %s AND ts < %s", (inst.symbol, tf, floor))
     return total
@@ -501,23 +517,37 @@ def backfill(source: str, since: date, inst: Instrument = GOLD) -> int:
     return n
 
 
-def _first_hour() -> datetime | None:
+def _oldest(inst: Instrument = GOLD, tf: str = "1h") -> datetime | None:
     with db.conn() as c:
-        row = c.execute("SELECT min(ts) AS t FROM candles WHERE symbol = %s AND tf = '1h'", (config.SYMBOL,)).fetchone()
+        row = c.execute("SELECT min(ts) AS t FROM candles WHERE symbol = %s AND tf = %s", (inst.symbol, tf)).fetchone()
     return row["t"] if row else None
 
 
-def extend_history(source: str) -> int:
-    """Once, fetch gold's hourly history from HISTORY_SINCE up to the oldest stored hour, so
-    databases first filled from 2010 reach back as far as the feed goes."""
-    since = config.HISTORY_SINCE
-    first = _first_hour()
-    if source != "dukascopy" or first is None or db.get_meta("history_since") == since.isoformat():
+def extend_history(source: str, inst: Instrument = GOLD) -> int:
+    """Once per market, fetch hourly history from its history start (HISTORY_SINCE for gold,
+    MARKET_HISTORY_SINCE for the rest) up to the oldest stored hour, so markets first loaded from a later
+    date reach back as far as the feed goes.
+
+    It walks back a year at a time from the oldest stored hour, so a run cut short (a deploy) leaves no
+    hole: the next run carries on from the new oldest hour. A year with no prices at all means the feed
+    starts later than that, and ends the walk."""
+    since = _history_start(source, inst)
+    key = _key("history_since", inst)
+    first = _oldest(inst)
+    if source != "dukascopy" or first is None or db.get_meta(key) == since.isoformat():
         return 0
     start = datetime(since.year, since.month, since.day, tzinfo=UTC)
-    n = load(source, start, first, GOLD) if first > start + timedelta(days=7) else 0
-    db.set_meta("history_since", since.isoformat())
-    log.info("extended hourly history back to %s: %d bars", since, n)
+    n = 0
+    end = first
+    while end > start + timedelta(days=7):
+        chunk_start = max(start, end - timedelta(days=366))
+        got = load(source, chunk_start, end, inst)
+        n += got
+        if not got:
+            break
+        end = chunk_start
+    db.set_meta(key, since.isoformat())
+    log.info("%s: extended hourly history back to %s: %d bars", inst.symbol, since, n)
     return n
 
 
@@ -532,12 +562,12 @@ def update(source: str, inst: Instrument = GOLD) -> int:
     last = _last_hour(inst)
     if last is None or db.get_meta(_key("price_source", inst)) != source:
         n = backfill(source, _history_start(source, inst), inst)
-        if source == "dukascopy" and inst.symbol == GOLD.symbol:
-            db.set_meta("history_since", config.HISTORY_SINCE.isoformat())
+        if source == "dukascopy":
+            db.set_meta(_key("history_since", inst), _history_start(source, inst).isoformat())
         return n
     n = load(source, last - timedelta(days=1), datetime.now(UTC), inst)
     _load_fine_safely(source, inst)
-    return n + (extend_history(source) if inst.symbol == GOLD.symbol else 0)
+    return n + extend_history(source, inst)
 
 
 def update_all(source: str) -> int:
