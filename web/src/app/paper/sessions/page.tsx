@@ -7,18 +7,23 @@ import ReplaySummary from "@/components/practice/ReplaySummary";
 import SignInPrompt from "@/components/SignInPrompt";
 import { toast } from "@/components/Toaster";
 import { Chips, Empty, Icon, PageHeader } from "@/components/ui";
-import { api, type ReplaySettled, type Session, type SessionSummary, type SessionTf } from "@/lib/api";
+import MarketPicker from "@/components/markets/MarketPicker";
+import { api, type Market, type ReplaySettled, type Session, type SessionSummary, type SessionTf } from "@/lib/api";
+import { GOLD, useMarket, useMarkets } from "@/lib/markets";
 import { useUser } from "@/lib/useUser";
 
-const TFS: { key: SessionTf; label: string; higher: string; note: string }[] = [
-  { key: "5m", label: "5 min", higher: "with hourly", note: "Minute data covers the last 60 days." },
-  { key: "15m", label: "15 min", higher: "with 4-hour", note: "Minute data covers the last 60 days." },
-  { key: "1h", label: "1 hour", higher: "with daily", note: "Hourly data goes back to 2003." },
+// Gold keeps the longest history; the other markets keep minute bars for two weeks and hourly bars from 2015.
+const TFS: { key: SessionTf; label: string; higher: string; note: (gold: boolean) => string }[] = [
+  { key: "5m", label: "5 min", higher: "with hourly", note: (g) => `Minute data covers the last ${g ? "60" : "14"} days.` },
+  { key: "15m", label: "15 min", higher: "with 4-hour", note: (g) => `Minute data covers the last ${g ? "60" : "14"} days.` },
+  { key: "1h", label: "1 hour", higher: "with daily", note: (g) => `Hourly data goes back to ${g ? "2003" : "2015 or when the market's data starts"}.` },
 ];
+const marketOf = (symbol: string | undefined, markets: Market[]) => markets.find((m) => m.symbol === (symbol ?? GOLD.symbol)) ?? GOLD;
 const field = "rounded-lg border border-border bg-background px-2.5 py-1.5 text-sm outline-none focus:border-gold";
 const SAVE_MS = 1500;
 
 function NewSession({ onMade }: { onMade: (s: Session) => void }) {
+  const [market, setSymbol, markets] = useMarket();
   const [tf, setTf] = useState<SessionTf>("1h");
   const [pick, setPick] = useState<"random" | "dates">("random");
   const [start, setStart] = useState("");
@@ -32,15 +37,19 @@ function NewSession({ onMade }: { onMade: (s: Session) => void }) {
       e.preventDefault();
       setBusy(true); setError(null);
       try {
-        onMade(await api.newSession({ tf, blind, name, ...(pick === "dates" ? { start, end } : {}) }));
+        onMade(await api.newSession({ symbol: market.symbol, tf, blind, name, ...(pick === "dates" ? { start, end } : {}) }));
       } catch (err) { setError(err instanceof Error ? err.message : "Couldn't start the session"); }
       finally { setBusy(false); }
     }}>
       <h2 className="flex items-center gap-2 font-medium"><Icon name="clock" className="h-4 w-4 text-gold" />New session</h2>
       <div>
+        <p className="mb-1 text-xs text-muted">Market</p>
+        <MarketPicker market={market} markets={markets} onChange={setSymbol} />
+      </div>
+      <div>
         <p className="mb-1 text-xs text-muted">Candles</p>
         <Chips options={TFS.map((t) => ({ key: t.key, label: `${t.label} ${t.higher}` }))} value={tf} onChange={setTf} />
-        <p className="mt-1 text-xs text-muted">{TFS.find((t) => t.key === tf)?.note} A session holds up to 3,000 candles.</p>
+        <p className="mt-1 text-xs text-muted">{TFS.find((t) => t.key === tf)?.note(market.symbol === GOLD.symbol)} A session holds up to 3,000 candles.</p>
       </div>
       <div>
         <p className="mb-1 text-xs text-muted">Dates</p>
@@ -70,11 +79,13 @@ function NewSession({ onMade }: { onMade: (s: Session) => void }) {
 
 function SessionRow({ s, onOpen, onDelete }: { s: SessionSummary; onOpen: () => void; onDelete: () => void }) {
   const [confirm, setConfirm] = useState(false);
+  const markets = useMarkets();
   const r = s.result;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-xl border border-border bg-surface px-3.5 py-2.5 text-sm">
       <span className="font-medium">{s.name || `${s.tf} session`}</span>
       {s.blind && <span className="rounded-full bg-calm/15 px-2 py-0.5 text-[11px] text-calm">Blind</span>}
+      <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted">{marketOf(s.symbol, markets).name}</span>
       <span className="text-xs text-muted">{s.start ? `${s.start} to ${s.end}` : "Dates hidden"} · {s.tf}</span>
       <span className="text-xs text-muted">
         {s.finished && r ? `Finished: ${r.return_pct >= 0 ? "+" : ""}${r.return_pct.toFixed(2)}% over ${r.trades} trades` : `${s.progress.shown} candles in, ${s.progress.trades} trades`}
@@ -91,6 +102,7 @@ function SessionRow({ s, onOpen, onDelete }: { s: SessionSummary; onOpen: () => 
 
 export default function SessionsPage() {
   const { user } = useUser();
+  const markets = useMarkets();
   const [list, setList] = useState<SessionSummary[] | null>(null);
   const [open, setOpen] = useState<Session | null>(null);
   const [done, setDone] = useState<{ trades: ReplaySettled[]; info: SessionSummary } | null>(null);
@@ -136,7 +148,7 @@ export default function SessionsPage() {
   return (
     <div className="mx-auto max-w-6xl space-y-5 px-4 py-8">
       <PageHeader icon="clock" title="Manual backtesting"
-        subtitle="Replay any stretch of gold's history candle by candle, with a higher timeframe beside it. Sessions save as you go, so you can stop and pick up later on any device."
+        subtitle="Replay any stretch of any market's history candle by candle, with a higher timeframe beside it. Sessions save as you go, so you can stop and pick up later on any device."
         right={<Link href="/paper/replay" className="flex basis-full justify-center rounded-full border border-border px-4 py-1.5 text-sm hover:border-gold/40 sm:basis-auto">Quick one-day replay</Link>} />
 
       {open ? (
@@ -145,13 +157,14 @@ export default function SessionsPage() {
             <button type="button" onClick={async () => { await flush(); setOpen(null); refresh(); }}
               className="rounded-lg border border-border px-3 py-1.5 hover:border-muted">← All sessions</button>
             <span className="font-medium">{open.name || `${open.tf} session`}</span>
+            <span className="rounded-full bg-surface-2 px-2 py-0.5 text-[11px] text-muted">{marketOf(open.symbol, markets).name}</span>
             {open.blind && !done && <span className="rounded-full bg-calm/15 px-2 py-0.5 text-[11px] text-calm">Blind: dates hidden</span>}
             {!done && <span className="ml-auto text-xs text-muted">{saved === "saving" ? "Saving…" : saved === "saved" ? "Progress saved" : "Saves as you go"}</span>}
             {!done && <button type="button" onClick={async () => { await flush(); toast("Saved. Resume it any time from this page.", { tone: "up" }); setOpen(null); refresh(); }}
               className="rounded-lg border border-gold/50 px-3 py-1.5 text-gold hover:bg-gold/10">Pause and save</button>}
           </div>
           <ReplayPlayer key={open.id} bars={open.bars} context={open.context} balance={open.balance} leverage={open.leverage}
-            blind={open.blind} higher={open.htf} initial={st} onState={done ? undefined : onState} height={460}
+            market={marketOf(open.symbol, markets)} blind={open.blind} higher={open.htf} initial={st} onState={done ? undefined : onState} height={460}
             onFinish={async (trades, settled) => {
               if (timer.current) clearTimeout(timer.current);
               try {

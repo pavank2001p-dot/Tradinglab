@@ -4,7 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import SignInPrompt from "@/components/SignInPrompt";
 import { Chips, Empty, Icon, PageHeader } from "@/components/ui";
-import { api, fmtPct, type BacktestParams, type FitCheck, type Plan, type PlanInput, type PlanOptions, type PlanResult, type PlanStats } from "@/lib/api";
+import MarketPicker from "@/components/markets/MarketPicker";
+import { GOLD, ticker, unitsLabel, useMarket } from "@/lib/markets";
+import { api, fmtPct, type BacktestParams, type FitCheck, type Market, type Plan, type PlanInput, type PlanOptions, type PlanResult, type PlanStats } from "@/lib/api";
 import { useUser } from "@/lib/useUser";
 
 const input = "w-full rounded-lg border border-border bg-background px-3 py-1.5 outline-none focus:border-gold";
@@ -70,9 +72,10 @@ function StatsCol({ title, period, s, fit }: { title: string; period: string; s:
   );
 }
 
-function Pick({ r, rank, plan, input }: { r: PlanResult; rank: number; plan: Plan; input: PlanInput }) {
+function Pick({ r, rank, plan, input, market }: { r: PlanResult; rank: number; plan: Plan; input: PlanInput; market: Market }) {
   const h = heldUp(r);
-  const oz = (input.capital * r.size_pct) / 100 / plan.last_price;
+  const units = (input.capital * r.size_pct) / 100 / plan.last_price;
+  const unit = market.unit === "ounce" ? "oz" : unitsLabel(market, units);
   return (
     <article className="rounded-2xl border border-border bg-surface p-4">
       <div className="flex items-start gap-3">
@@ -96,7 +99,7 @@ function Pick({ r, rank, plan, input }: { r: PlanResult; rank: number; plan: Pla
       </ul>
       <p className="mt-3 text-sm">
         Size each trade at <b className="tabular-nums">{r.size_pct.toFixed(0)}%</b> of the account
-        <span className="text-muted"> ({(r.size_pct / 100).toFixed(2)}x, about {oz.toFixed(2)} oz on ${input.capital.toLocaleString()} today)</span>,
+        <span className="text-muted"> ({(r.size_pct / 100).toFixed(2)}x, about {units.toLocaleString("en-US", { maximumFractionDigits: market.unit === "share" ? 0 : market.asset_class === "crypto" ? 4 : 2 })} {unit} on ${input.capital.toLocaleString()} today)</span>,
         so a stop-out costs about {plan.limits.max_risk_per_trade_pct}% or less.
       </p>
       <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -122,6 +125,8 @@ function Pick({ r, rank, plan, input }: { r: PlanResult; rank: number; plan: Pla
 
 export default function StrategiesPage() {
   const { user } = useUser();
+  const [market, setSymbol, markets] = useMarket();
+  const holding = market.symbol === GOLD.symbol ? "gold" : ticker(market);
   const [opts, setOpts] = useState<PlanOptions | null>(null);
   const [form, setForm] = useState<PlanInput>({ tf: "1d", years: 10, style: "any", direction: "both", capital: 10000 });
   const [plan, setPlan] = useState<Plan | null>(null);
@@ -150,7 +155,7 @@ export default function StrategiesPage() {
     setBusy(true);
     setError(null);
     try {
-      const q = { ...form, max_leverage: form.max_leverage && form.max_leverage <= limits.max_leverage ? form.max_leverage : null };
+      const q = { ...form, symbol: market.symbol, max_leverage: form.max_leverage && form.max_leverage <= limits.max_leverage ? form.max_leverage : null };
       setPlan(await api.plan(q));
       setAsked(q);
       if (window.innerWidth < 1024) setTimeout(() => document.getElementById("results")?.scrollIntoView({ behavior: "smooth" }), 50);
@@ -167,7 +172,11 @@ export default function StrategiesPage() {
   return (
     <div className="mx-auto grid max-w-6xl gap-6 px-4 py-8 lg:grid-cols-[320px_1fr]">
       <form onSubmit={find} className="space-y-5">
-        <PageHeader icon="trophy" title="Strategy finder" subtitle="Strategies tuned to your risk limits on gold's history" />
+        <PageHeader icon="trophy" title="Strategy finder" subtitle={`Strategies tuned to your risk limits on ${market.symbol === GOLD.symbol ? "gold" : market.name}'s history`} />
+        <div>
+          <Label>Market</Label>
+          <MarketPicker market={market} markets={markets} onChange={(s) => { setSymbol(s); setPlan(null); }} />
+        </div>
 
         <div>
           <Label>Risk profile</Label>
@@ -245,7 +254,7 @@ export default function StrategiesPage() {
       <section id="results" className="min-w-0 space-y-6">
         {!plan || !asked ? (
           <Empty icon="trophy" title="No search yet">
-            Pick your profile and preferences, then press Find strategies to see which ones stayed inside your limits on real gold prices.
+            Pick your profile and preferences, then press Find strategies to see which ones stayed inside your limits on real {market.symbol === GOLD.symbol ? "gold" : market.name} prices.
           </Empty>
         ) : (
           <>
@@ -263,7 +272,8 @@ export default function StrategiesPage() {
               <div>
                 <h2 className="mb-3 font-medium">Best fits for your limits</h2>
                 <div className="space-y-4">
-                  {picks.map((r, i) => <Pick key={r.custom_id ?? r.strategy} r={r} rank={i + 1} plan={plan} input={asked} />)}
+                  {picks.map((r, i) => <Pick key={r.custom_id ?? r.strategy} r={r} rank={i + 1} plan={plan} input={asked}
+                    market={markets.find((m) => m.symbol === (plan.symbol ?? GOLD.symbol)) ?? market} />)}
                 </div>
               </div>
             ) : (
@@ -304,7 +314,7 @@ export default function StrategiesPage() {
                       </tr>
                     ))}
                     <tr className="border-t border-border bg-surface/60">
-                      <td className="px-3 py-1.5 text-muted">Owning gold, no leverage</td>
+                      <td className="px-3 py-1.5 text-muted">Owning {holding}, no leverage</td>
                       <td className="px-3 py-1.5 text-right">100%</td>
                       <td className="px-3 py-1.5 text-right">{ret(plan.benchmark.in_sample.cagr_pct)}</td>
                       <td className="px-3 py-1.5 text-right">{dd(plan.benchmark.in_sample.max_drawdown_pct)}</td>
@@ -317,7 +327,7 @@ export default function StrategiesPage() {
               </div>
               <p className="mt-2 text-xs text-muted">
                 Didn&apos;t qualify means it lost money, broke a limit, or made fewer than 5 trades in the tuning years.
-                Owning gold here is a broker position held throughout, so it pays the same overnight costs as the strategies.
+                Owning {holding} here is a broker position held throughout, so it pays the same overnight costs as the strategies.
               </p>
             </div>
           </>

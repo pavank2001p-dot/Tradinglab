@@ -1021,7 +1021,7 @@ export default function PaperPage() {
                 Trading hours: {market.hours}. Stops and targets are checked against every minute of real prices,
                 even while this page is closed. Practice only, not advice.
               </p>
-              {symbol === GOLD.symbol && <AlertsCard price={state.price?.bid ?? null} />}
+              <AlertsCard key={symbol} price={state.price?.bid ?? null} market={market} />
               <div className="grid grid-cols-2 gap-2 text-sm">
                 <Link href="/paper/replay" className="card flex items-center gap-2 p-3 hover:border-gold/40"><Icon name="clock" className="h-4 w-4 text-gold" />Replay a day</Link>
                 <Link href="/paper/challenge" className="card flex items-center gap-2 p-3 hover:border-gold/40"><Icon name="trophy" className="h-4 w-4 text-gold" />Weekly challenge</Link>

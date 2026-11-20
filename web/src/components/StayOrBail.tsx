@@ -1,6 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import MarketPicker from "@/components/markets/MarketPicker";
+import { GOLD, useMarket } from "@/lib/markets";
 import { api, type BailEpisode } from "@/lib/api";
 import { mirrorReady, money, useMirror } from "./MoneyMirror";
 
@@ -32,16 +34,31 @@ function Walk({ e, upto, limitPct, reveal }: { e: BailEpisode; upto: number; lim
   );
 }
 
-/** Walk your own money through one of gold's worst years, a month at a time, and see where you would bail. */
+/** Walk your own money through one of a market's worst years (gold, or the market picked across the site), a month
+ *  at a time, and see where you would bail. */
 export default function StayOrBail({ limitPct }: { limitPct: number }) {
+  const [market, setSymbol, markets] = useMarket();
   const [eps, setEps] = useState<BailEpisode[] | null>(null);
   const [pick, setPick] = useState(0);
   const [month, setMonth] = useState(0);
   const [bailed, setBailed] = useState<number | null>(null);
   const [mirror] = useMirror();
   const [amountIn, setAmountIn] = useState("");
-  useEffect(() => { api.stayOrBail().then((r) => setEps(r.episodes), () => setEps([])); }, []);
-  if (!eps?.length) return null;
+  useEffect(() => {
+    setPick(0); setMonth(0); setBailed(null);
+    api.stayOrBail(market.symbol).then((r) => setEps(r.episodes), () => setEps([]));
+  }, [market.symbol]);
+  const what = market.symbol === GOLD.symbol ? "gold" : market.name;
+  if (!eps) return null;
+  if (!eps.length) {
+    return (
+      <section className="rounded-2xl border border-border bg-surface p-5">
+        <h2 className="text-lg font-semibold">Stay or bail</h2>
+        <p className="mt-1 text-sm text-muted">{market.name} hasn&apos;t had a fall of 10% or more in a year in the history stored here. Try another market.</p>
+        <MarketPicker className="mt-3" market={market} markets={markets} onChange={setSymbol} />
+      </section>
+    );
+  }
 
   const currency = mirrorReady(mirror) ? mirror.currency : "USD";
   const amount = Number(amountIn.replace(/[^0-9.]/g, "")) || (mirrorReady(mirror) ? mirror.stake : 10_000);
@@ -62,9 +79,10 @@ export default function StayOrBail({ limitPct }: { limitPct: number }) {
         <div>
           <h2 className="text-lg font-semibold">Stay or bail</h2>
           <p className="mt-1 max-w-xl text-sm text-muted">
-            The quiz asked how a fall would feel. This shows you. Put your own money into one of gold&apos;s worst years and live it a month at a time.
+            The quiz asked how a fall would feel. This shows you. Put your own money into one of {what}&apos;s worst years and live it a month at a time.
             The month you bail is your real limit.
           </p>
+          <MarketPicker className="mt-3" market={market} markets={markets} onChange={setSymbol} />
         </div>
         <label className="text-xs text-muted">Your money ({currency})
           <input id="bail-amount" value={amountIn} onChange={(ev) => setAmountIn(ev.target.value)} inputMode="decimal" placeholder={String(amount)}
@@ -109,7 +127,7 @@ export default function StayOrBail({ limitPct }: { limitPct: number }) {
             </>
           ) : (
             <div className="rise-in space-y-2 text-sm">
-              <p className="text-xs uppercase tracking-wider text-muted">Year {LETTERS[pick]} was gold from {startDate}</p>
+              <p className="text-xs uppercase tracking-wider text-muted">Year {LETTERS[pick]} was {what} from {startDate}</p>
               <p className="text-lg font-semibold">
                 {bailed != null ? `You bailed in month ${bailed}, at ${dd(bailed).toFixed(1)}%.` : "You stayed the whole year."}
               </p>
@@ -130,7 +148,7 @@ export default function StayOrBail({ limitPct }: { limitPct: number }) {
           )}
         </div>
       </div>
-      <p className="mt-3 text-xs text-muted">Real monthly gold closes, no leverage. The past doesn&apos;t say what gold will do next; it shows how a fall feels.</p>
+      <p className="mt-3 text-xs text-muted">Real monthly {what} closes, no leverage. The past doesn&apos;t say what {what} will do next; it shows how a fall feels.</p>
     </section>
   );
 }

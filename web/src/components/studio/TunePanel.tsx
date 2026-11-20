@@ -56,7 +56,7 @@ function values(k: Knob): number[] {
 
 /** Every number in the rules as a slider, plus a range test that re-runs the strategy across a spread of values. */
 export default function TunePanel({ rules, cat, test, onChange }: {
-  rules: Rules; cat: CustomCatalog; test: { tf: "1d" | "1h"; years: number; stop: number | null }; onChange: (r: Rules) => void;
+  rules: Rules; cat: CustomCatalog; test: { tf: "1d" | "1h"; years: number; stop: number | null; symbol?: string }; onChange: (r: Rules) => void;
 }) {
   const [sweep, setSweep] = useState<{ key: string; rows: SweepRow[] | null; err?: string } | null>(null);
   const anchors = useRef(new Map<string, [number, number]>());
@@ -77,7 +77,7 @@ export default function TunePanel({ rules, cat, test, onChange }: {
     if (sweep?.key === key) return setSweep(null);
     setSweep({ key, rows: null });
     try {
-      const rows = await api.customSweep({ rules, tf: test.tf, years: test.years, stop_loss_pct: test.stop, lane: k.lane, index: k.index, side: k.side, field: k.field, values: values(k) });
+      const rows = await api.customSweep({ rules, symbol: test.symbol, tf: test.tf, years: test.years, stop_loss_pct: test.stop, lane: k.lane, index: k.index, side: k.side, field: k.field, values: values(k) });
       setSweep({ key, rows });
     } catch (e) {
       setSweep({ key, rows: [], err: e instanceof Error ? e.message : "Couldn't run the range test" });

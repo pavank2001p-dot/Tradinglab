@@ -92,6 +92,29 @@ class Instrument:
     def round(self, price: float) -> float:
         return round(price, self.decimals)
 
+    @property
+    def weekends(self) -> bool:
+        """Trades on Saturdays and Sundays too (crypto)."""
+        return self.hours == "always"
+
+    @property
+    def year_days(self) -> int:
+        """Trading days in a year, for turning daily volatility into yearly."""
+        return 365 if self.weekends else 252
+
+    @property
+    def tick(self) -> float:
+        """The smallest price step shown (0.01 for gold, 0.00001 for EUR/USD)."""
+        return 10 ** -self.decimals
+
+    def units_text(self, n: float) -> str:
+        """A size in this market's own unit, like "5 oz", "10,000 units" or "3 shares"."""
+        u = "oz" if self.unit == "ounce" else self.unit if self.unit == "MMBtu" or n == 1 else f"{self.unit}s"
+        return f"{n:,.{0 if float(n).is_integer() else 2}f} {u}"
+
+    def price_text(self, p: float) -> str:
+        return f"${p:,.{self.decimals}f}"
+
     def public(self) -> dict:
         return {
             "symbol": self.symbol, "name": self.name, "asset_class": self.asset_class,
@@ -100,6 +123,7 @@ class Instrument:
             "hours": self.hours_text(), "open_now": self.is_open(datetime.now(timezone.utc)),
             "live": bool(self.live), "swap_long": self.swap_long, "swap_short": self.swap_short,
             "swap_long_pct": self.swap_long_pct, "swap_short_pct": self.swap_short_pct,
+            "tick": self.tick, "tick_value": round(self.tick * self.lot, 6), "weekends": self.weekends,
         }
 
 

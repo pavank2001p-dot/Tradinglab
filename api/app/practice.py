@@ -3,9 +3,10 @@
 Replay: a past stretch of candles is revealed one bar at a time and the user trades it. Entries
 and manual exits fill at the close of the bar on screen; stops and targets are checked against
 each later bar's high and low, the stop first when both are touched. There is no spread, so a
-replay result is about decisions rather than costs.
+replay result is about decisions rather than costs. Any market in app.instruments can be replayed; leverage is
+the replay's 1:20 or the market's own cap if that is lower (crypto).
 
-The weekly challenge is the same replay on one stretch for everyone that week. The browser sends
+The weekly challenge is the same replay on one stretch for everyone that week, on a market that rotates each week. The browser sends
 its trades and the server settles them again from the candles, so the leaderboard only shows
 results the prices support. Joining the leaderboard is opt-in, under a nickname.
 
@@ -23,6 +24,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 
 from . import config, db, prices
+from . import instruments as ins
 from .auth import UserOut, current_user
 from .paper import current_price
 from .trades import pnl as journal_pnl
@@ -36,6 +38,20 @@ CHALLENGE_RISK_PCT = 2.0   # most of the balance one challenge trade may put at 
 CONTEXT_BARS = 48          # bars shown before the replay starts, so there is something to read
 MAX_REPLAY_BARS = 600
 NICK = re.compile(r"^[A-Za-z0-9 _.-]{3,20}$")
+# Markets the weekly challenge rotates through, one per week (only those that are enabled on this server).
+CHALLENGE_MARKETS = ("XAUUSD", "EURUSD", "USA500IDXUSD", "BTCUSD", "GBPUSD", "LIGHTCMDUSD", "USATECHIDXUSD", "AAPLUSUSD",
+                     "XAGUSD", "ETHUSD", "NVDAUSUSD", "USA30IDXUSD")
+
+
+def market(symbol: str | None) -> ins.Instrument:
+    try:
+        return ins.get(symbol)
+    except KeyError:
+        raise HTTPException(404, f"Unknown market {symbol}. See /prices/markets for the list.")
+
+
+def leverage_of(m: ins.Instrument) -> int:
+    return min(REPLAY_LEVERAGE, m.max_leverage)
 
 
 def _r(x: float | None, n: int = 2) -> float | None:
@@ -47,11 +63,12 @@ def _r(x: float | None, n: int = 2) -> float | None:
 # ---------------------------------------------------------------------------
 
 class AlertIn(BaseModel):
-    price: float = Field(gt=0, lt=100_000)
+    price: float = Field(gt=0, lt=10_000_000)
     note: str = Field("", max_length=120)
+    symbol: str = config.SYMBOL
 
 
-ALERT_COLS = "id, price, direction, note, created_at, triggered_at, triggered_price"
+ALERT_COLS = "id, symbol, price, direction, note, created_at, triggered_at, triggered_price"
 
 
 @router.get("/alerts")
@@ -66,10 +83,11 @@ def alerts(user: UserOut = Depends(current_user)):
 
 @router.post("/alerts", status_code=201)
 def add_alert(body: AlertIn, user: UserOut = Depends(current_user)):
-    price = current_price()
+    m = market(body.symbol)
+    price = current_price(m.symbol)
     if not price:
         raise HTTPException(503, "No price yet, so there is nothing to compare the alert with")
-    if abs(body.price - price["bid"]) < 0.01:
+    if abs(body.price - price["bid"]) < m.tick:
         raise HTTPException(422, "That is the price right now. Pick a level above or below it.")
     direction = "above" if body.price > price["bid"] else "below"
     with db.conn() as c:
@@ -78,8 +96,9 @@ def add_alert(body: AlertIn, user: UserOut = Depends(current_user)):
         if n >= MAX_ALERTS:
             raise HTTPException(422, f"You can keep up to {MAX_ALERTS} waiting alerts. Remove one first.")
         return c.execute(
-            f"INSERT INTO price_alerts (user_id, price, direction, note) VALUES (%s, %s, %s, %s) RETURNING {ALERT_COLS}",
-            (user.id, round(body.price, 2), direction, body.note.strip()),
+            f"INSERT INTO price_alerts (user_id, symbol, price, direction, note) VALUES (%s, %s, %s, %s, %s) "
+            f"RETURNING {ALERT_COLS}",
+            (user.id, m.symbol, m.round(body.price), direction, body.note.strip()),
         ).fetchone()
 
 
@@ -95,32 +114,37 @@ def check_alerts(user: UserOut = Depends(current_user)):
 
     Uses the highest and lowest prices since each alert was made, so an alert is not missed
     while the site was closed."""
-    price = current_price()
-    if not price:
-        return {"triggered": [], "price": None}
+    gold = current_price()
     with db.conn() as c:
         waiting = c.execute(
-            "SELECT id, price, direction, created_at FROM price_alerts WHERE user_id = %s AND triggered_at IS NULL",
+            "SELECT id, symbol, price, direction, created_at FROM price_alerts WHERE user_id = %s AND triggered_at IS NULL",
             (user.id,),
         ).fetchall()
-        hit = []
+        hit: dict[float, list[int]] = {}
+        quotes: dict[str, dict | None] = {config.SYMBOL: gold}
         for a in waiting:
+            if a["symbol"] not in quotes:
+                quotes[a["symbol"]] = current_price(a["symbol"]) if a["symbol"] in ins.BY_SYMBOL else None
+            q = quotes[a["symbol"]]
+            if not q:
+                continue
             rng = c.execute(
                 "SELECT max(high) AS h, min(low) AS l FROM candles WHERE symbol = %s AND tf = '1m' "
                 "AND ts >= date_trunc('minute', %s::timestamptz)",
-                (config.SYMBOL, a["created_at"]),
+                (a["symbol"], a["created_at"]),
             ).fetchone()
-            hi = max(x for x in (rng["h"], price["bid"]) if x is not None)
-            lo = min(x for x in (rng["l"], price["bid"]) if x is not None)
+            hi = max(x for x in (rng["h"], q["bid"]) if x is not None)
+            lo = min(x for x in (rng["l"], q["bid"]) if x is not None)
             if (a["direction"] == "above" and hi >= a["price"]) or (a["direction"] == "below" and lo <= a["price"]):
-                hit.append(a["id"])
+                hit.setdefault(q["bid"], []).append(a["id"])
         rows = []
-        if hit:
-            rows = c.execute(
+        for bid, ids in hit.items():
+            rows += c.execute(
                 f"UPDATE price_alerts SET triggered_at = now(), triggered_price = %s WHERE id = ANY(%s) RETURNING {ALERT_COLS}",
-                (price["bid"], hit),
+                (bid, ids),
             ).fetchall()
-    return {"triggered": rows, "price": price["bid"]}
+    price = gold
+    return {"triggered": rows, "price": price["bid"] if price else None}
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +322,7 @@ def get_insights(source: Literal["paper", "journal"] = "paper", user: UserOut = 
 
 class ReplayTrade(BaseModel):
     side: Literal["long", "short"]
-    units: float = Field(gt=0, le=1_000_000)
+    units: float = Field(gt=0, le=1_000_000_000)
     entry_bar: int = Field(ge=0)
     exit_bar: int = Field(ge=0)
     stop: float | None = Field(None, gt=0)
@@ -324,7 +348,7 @@ def settle(bars: list[dict], t: ReplayTrade) -> dict:
     return {"entry_price": entry, "exit_price": exit_price, "exit_bar": exit_bar, "reason": reason, "pnl": p}
 
 
-def score(bars: list[dict], trades: list[ReplayTrade], require_stop: bool) -> dict:
+def score(bars: list[dict], trades: list[ReplayTrade], require_stop: bool, leverage: int = REPLAY_LEVERAGE) -> dict:
     """Settles every trade in order and checks the replay rules. Raises 422 when a rule is broken."""
     if not bars:
         raise HTTPException(422, "No candles to settle against")
@@ -335,8 +359,8 @@ def score(bars: list[dict], trades: list[ReplayTrade], require_stop: bool) -> di
         if t.entry_bar < last_exit:
             raise HTTPException(422, f"Trade {k} opens before the previous trade closed")
         entry = bars[t.entry_bar]["c"]
-        if t.units * entry > cash * REPLAY_LEVERAGE + 0.01:
-            raise HTTPException(422, f"Trade {k} is bigger than 1:{REPLAY_LEVERAGE} leverage allows")
+        if t.units * entry > cash * leverage + 0.01:
+            raise HTTPException(422, f"Trade {k} is bigger than 1:{leverage} leverage allows")
         if t.stop is not None and ((t.stop >= entry) if t.side == "long" else (t.stop <= entry)):
             raise HTTPException(422, f"Trade {k} has its stop on the wrong side of the entry")
         if require_stop:
@@ -356,9 +380,9 @@ def score(bars: list[dict], trades: list[ReplayTrade], require_stop: bool) -> di
             "trades": len(out), "wins": wins, "detail": out}
 
 
-def _bars(tf: str, start: int, end: int) -> tuple[list[dict], list[dict]]:
-    session = prices.candles(tf=tf, start=start, end=end, limit=MAX_REPLAY_BARS)["bars"]
-    context = prices.candles(tf=tf, start=None, end=start, limit=CONTEXT_BARS)["bars"]
+def _bars(tf: str, start: int, end: int, symbol: str = config.SYMBOL) -> tuple[list[dict], list[dict]]:
+    session = prices.candles(tf=tf, start=start, end=end, limit=MAX_REPLAY_BARS, symbol=symbol)["bars"]
+    context = prices.candles(tf=tf, start=None, end=start, limit=CONTEXT_BARS, symbol=symbol)["bars"]
     return context, session
 
 
@@ -367,31 +391,34 @@ def _bars(tf: str, start: int, end: int) -> tuple[list[dict], list[dict]]:
 # ---------------------------------------------------------------------------
 
 @router.get("/replay")
-def replay(day: date | None = None, tf: Literal["5m", "15m", "1h"] = "5m"):
+def replay(day: date | None = None, tf: Literal["5m", "15m", "1h"] = "5m", symbol: str = config.SYMBOL):
     """A stretch to replay. 5m and 15m replay one day (06:00 to 21:00 UTC); 1h replays the five days from `day`."""
-    rng = _range(tf)
+    m = market(symbol)
+    rng = _range(tf, m.symbol)
     if not rng:
-        raise HTTPException(404, "No candles at that timeframe yet")
+        raise HTTPException(404, f"No {m.name} candles at that timeframe yet")
     first, last = rng
     if day is None:
         span = max((last - first).days - 3, 1)
-        day = _weekday(first.date() + timedelta(days=1 + random.randrange(span)))
+        day = first.date() + timedelta(days=1 + random.randrange(span))
+        if not m.weekends:
+            day = _weekday(day)
     start, end = _window(day, tf)
     if end > last.timestamp() + 3600 or start < first.timestamp():
         raise HTTPException(422, f"Pick a day between {first.date()} and {(last - timedelta(days=1)).date()}")
-    context, session = _bars(tf, start, end)
+    context, session = _bars(tf, start, end, m.symbol)
     if len(session) < 10:
         raise HTTPException(422, "The market was closed or quiet that day. Pick another one.")
-    return {"tf": tf, "day": day.isoformat(), "start": start, "end": end, "context": context, "bars": session,
-            "balance": REPLAY_BALANCE, "leverage": REPLAY_LEVERAGE,
+    return {"tf": tf, "symbol": m.symbol, "day": day.isoformat(), "start": start, "end": end, "context": context,
+            "bars": session, "balance": REPLAY_BALANCE, "leverage": leverage_of(m),
             "range": {"first": first.date().isoformat(), "last": last.date().isoformat()}}
 
 
-def _range(tf: str) -> tuple[datetime, datetime] | None:
+def _range(tf: str, symbol: str = config.SYMBOL) -> tuple[datetime, datetime] | None:
     base = prices.TIMEFRAMES[tf][0]
     with db.conn() as c:
         r = c.execute("SELECT min(ts) AS a, max(ts) AS b FROM candles WHERE symbol = %s AND tf = %s",
-                      (config.SYMBOL, base)).fetchone()
+                      (symbol, base)).fetchone()
     return (r["a"], r["b"]) if r and r["a"] else None
 
 
@@ -412,14 +439,16 @@ class SettleIn(BaseModel):
     tf: Literal["5m", "15m", "1h"]
     start: int
     end: int
+    symbol: str = config.SYMBOL
     trades: list[ReplayTrade] = Field(max_length=200)
 
 
 @router.post("/replay/settle")
 def replay_settle(body: SettleIn):
     """Settles a free replay the same way the challenge is scored, so the two always agree."""
-    _, session = _bars(body.tf, body.start, body.end)
-    return score(session, body.trades, require_stop=False)
+    m = market(body.symbol)
+    _, session = _bars(body.tf, body.start, body.end, m.symbol)
+    return score(session, body.trades, require_stop=False, leverage=leverage_of(m))
 
 
 # ---------------------------------------------------------------------------
@@ -438,18 +467,19 @@ def _week_bounds(week: str) -> tuple[date, date]:
 
 def challenge_window(c, week: str) -> dict:
     """The stretch everyone replays this week. Chosen once and stored, so it never moves."""
-    row = c.execute("SELECT week, tf, start_ts, end_ts FROM challenges WHERE week = %s", (week,)).fetchone()
+    row = c.execute("SELECT week, symbol, tf, start_ts, end_ts FROM challenges WHERE week = %s", (week,)).fetchone()
     if row:
         return row
     monday, _ = _week_bounds(week)
     seed = int(hashlib.sha256(f"goldlab-{week}".encode()).hexdigest(), 16)
+    symbol = challenge_market(week, c)
     pick = None
     # A weekday with minute data, 8 to 40 days back, inside the minute history that is kept.
     for k in range(12):
         day = _weekday(monday - timedelta(days=8 + (seed >> (k * 5)) % 33))
         start, end = _window(day, "5m")
         n = c.execute("SELECT count(*) AS n FROM candles WHERE symbol = %s AND tf = '1m' AND ts >= to_timestamp(%s) "
-                      "AND ts < to_timestamp(%s)", (config.SYMBOL, start, end)).fetchone()["n"]
+                      "AND ts < to_timestamp(%s)", (symbol, start, end)).fetchone()["n"]
         if n >= 600:
             pick = ("5m", start, end)
             break
@@ -459,17 +489,30 @@ def challenge_window(c, week: str) -> dict:
             day -= timedelta(days=day.weekday())
             start, end = _window(day, "1h")
             n = c.execute("SELECT count(*) AS n FROM candles WHERE symbol = %s AND tf = '1h' AND ts >= to_timestamp(%s) "
-                          "AND ts < to_timestamp(%s)", (config.SYMBOL, start, end)).fetchone()["n"]
+                          "AND ts < to_timestamp(%s)", (symbol, start, end)).fetchone()["n"]
             if n >= 60:
                 pick = ("1h", start, end)
                 break
     if pick is None:
         raise HTTPException(503, "There aren't enough candles for a challenge yet")
     return c.execute(
-        "INSERT INTO challenges (week, tf, start_ts, end_ts) VALUES (%s, %s, %s, %s) "
-        "ON CONFLICT (week) DO UPDATE SET week = EXCLUDED.week RETURNING week, tf, start_ts, end_ts",
-        (week, *pick),
+        "INSERT INTO challenges (week, symbol, tf, start_ts, end_ts) VALUES (%s, %s, %s, %s, %s) "
+        "ON CONFLICT (week) DO UPDATE SET week = EXCLUDED.week RETURNING week, symbol, tf, start_ts, end_ts",
+        (week, symbol, *pick),
     ).fetchone()
+
+
+def challenge_market(week: str, c=None) -> str:
+    """This week's market: the rotation's next one that is enabled and has hourly prices, gold if none does."""
+    pool = [s for s in CHALLENGE_MARKETS if s in ins.BY_SYMBOL]
+    if not pool:
+        return config.SYMBOL
+    year, wk = int(week[:4]), int(week[6:])
+    k = (year * 53 + wk) % len(pool)
+    for sym in pool[k:] + pool[:k]:
+        if c is None or c.execute("SELECT 1 FROM candles WHERE symbol = %s AND tf = '1h' LIMIT 1", (sym,)).fetchone():
+            return sym
+    return config.SYMBOL
 
 
 def _board(c, week: str, user_id: int | None) -> dict:
@@ -501,10 +544,12 @@ def challenge(user: UserOut = Depends(current_user)):
                          "ORDER BY created_at DESC LIMIT 1", (user.id,)).fetchone()
         last = c.execute("SELECT week FROM challenges WHERE week < %s ORDER BY week DESC LIMIT 1", (week,)).fetchone()
         last_board = _board(c, last["week"], user.id) if last else None
-    context, session = ([], []) if board["mine"] else _bars(w["tf"], w["start_ts"], w["end_ts"])
+    m = ins.BY_SYMBOL.get(w["symbol"], ins.GOLD)
+    context, session = ([], []) if board["mine"] else _bars(w["tf"], w["start_ts"], w["end_ts"], m.symbol)
     return {
         "week": week, "ends": ends.isoformat(), "tf": w["tf"], "start": w["start_ts"], "end": w["end_ts"],
-        "rules": {"balance": REPLAY_BALANCE, "leverage": REPLAY_LEVERAGE, "risk_pct": CHALLENGE_RISK_PCT},
+        "symbol": m.symbol,
+        "rules": {"balance": REPLAY_BALANCE, "leverage": leverage_of(m), "risk_pct": CHALLENGE_RISK_PCT},
         "context": context, "bars": session, "board": board, "nickname": nick["nickname"] if nick else None,
         "last_week": {"week": last["week"], **last_board} if last else None,
     }
@@ -539,8 +584,9 @@ def enter(body: EntryIn, user: UserOut = Depends(current_user)):
         w = challenge_window(c, week)
         if c.execute("SELECT 1 FROM challenge_entries WHERE user_id = %s AND week = %s", (user.id, week)).fetchone():
             raise HTTPException(409, "You have already played this week's challenge")
-    _, session = _bars(w["tf"], w["start_ts"], w["end_ts"])
-    result = score(session, body.trades, require_stop=True)
+    m = ins.BY_SYMBOL.get(w["symbol"], ins.GOLD)
+    _, session = _bars(w["tf"], w["start_ts"], w["end_ts"], m.symbol)
+    result = score(session, body.trades, require_stop=True, leverage=leverage_of(m))
     with db.conn() as c:
         c.execute(
             "INSERT INTO challenge_entries (user_id, week, return_pct, max_drawdown_pct, trades, wins, public, nickname) "

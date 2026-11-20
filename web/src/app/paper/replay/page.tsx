@@ -5,7 +5,9 @@ import { useCallback, useEffect, useState } from "react";
 import ReplayPlayer from "@/components/practice/ReplayPlayer";
 import ReplaySummary from "@/components/practice/ReplaySummary";
 import { Chips, Icon, PageHeader } from "@/components/ui";
+import MarketPicker from "@/components/markets/MarketPicker";
 import { api, type Replay, type ReplaySettled, type ReplayTf } from "@/lib/api";
+import { useMarket } from "@/lib/markets";
 import { TF_LABEL } from "@/lib/replay";
 
 const TFS: { key: ReplayTf; label: string }[] = [
@@ -15,6 +17,7 @@ const TFS: { key: ReplayTf; label: string }[] = [
 ];
 
 export default function ReplayPage() {
+  const [market, setSymbol, markets] = useMarket();
   const [tf, setTf] = useState<ReplayTf>("5m");
   const [day, setDay] = useState("");
   const [data, setData] = useState<Replay | null>(null);
@@ -27,7 +30,7 @@ export default function ReplayPage() {
     setBusy(true);
     setError(null);
     try {
-      const r = await api.replay(o);
+      const r = await api.replay({ ...o, symbol: market.symbol });
       setData(r);
       setDay(r.day);
       setDone(null);
@@ -37,20 +40,25 @@ export default function ReplayPage() {
     } finally {
       setBusy(false);
     }
-  }, []);
+  }, [market.symbol]);
 
-  useEffect(() => { load({ tf: "5m" }); }, [load]);
+  // A new market loads a random day of its own; the hourly view reaches further back than minute data.
+  useEffect(() => { load({ tf }); }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const label = data ? new Date(`${data.day}T00:00:00Z`).toLocaleDateString("en-GB", { timeZone: "UTC", weekday: "long", day: "numeric", month: "long", year: "numeric" }) : "";
 
   return (
     <div className="mx-auto max-w-6xl space-y-5 px-4 py-8">
       <PageHeader icon="clock" title="Replay a day"
-        subtitle="Step through real past candles one at a time and trade them with $10,000 of virtual money. You only see what a trader saw then."
+        subtitle="Step through real past candles of any market one at a time and trade them with $10,000 of virtual money. You only see what a trader saw then."
         right={<Link href="/paper/challenge" className="flex basis-full items-center justify-center gap-1 sm:basis-auto rounded-full border border-gold/40 px-4 py-1.5 text-sm text-gold hover:bg-gold/10">
           <Icon name="trophy" className="h-4 w-4" /> This week&apos;s challenge</Link>} />
 
       <div className="card flex flex-wrap items-end gap-3 p-4">
+        <div>
+          <p className="mb-1 text-xs text-muted">Market</p>
+          <MarketPicker market={market} markets={markets} onChange={(s) => { setDay(""); setSymbol(s); }} />
+        </div>
         <div>
           <p className="mb-1 text-xs text-muted">Candles</p>
           <Chips options={TFS} value={tf} onChange={(v) => { setTf(v); load({ tf: v, day: day || undefined }); }} />
@@ -72,7 +80,7 @@ export default function ReplayPage() {
 
       {data ? (
         <div className="space-y-4">
-          <ReplayPlayer key={round} bars={data.bars} context={data.context} balance={data.balance} leverage={data.leverage}
+          <ReplayPlayer key={round} bars={data.bars} context={data.context} balance={data.balance} leverage={data.leverage} market={market}
             onFinish={(_, d) => setDone(d)} />
           {done && (
             <ReplaySummary done={done} balance={data.balance}>

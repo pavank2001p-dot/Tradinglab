@@ -20,6 +20,8 @@ export type Market = {
   default_units: number; spread: number; max_leverage: number; hours: string; open_now: boolean; live: boolean;
   swap_long: number | null; swap_short: number | null; swap_long_pct: number; swap_short_pct: number;
   price: number | null; as_of: number | null; has_seconds: boolean; has_history: boolean;
+  /** Smallest price step, its value in USD on one lot, and whether the market trades at weekends (crypto). */
+  tick?: number; tick_value?: number; weekends?: boolean;
 };
 export type MarketList = { default: string; classes: Record<string, string>; markets: Market[] };
 
@@ -103,6 +105,7 @@ export type SweepRow = { value: number; ok: boolean; return_pct?: number | null;
 export type CustomPreview = {
   stats: Report["stats"]; equity: Report["equity"]; trades: PreviewTrade[];
   candles: { t: number; o: number; h: number; l: number; c: number }[]; in_market_pct: number; description: string;
+  symbol?: string;
 };
 
 /** A saved custom strategy shown in the same list as the built-in ones. */
@@ -257,6 +260,7 @@ export type AssistantStatus = { configured: boolean; limit: number; used_today: 
 export type AssistantAnswer = { id: number; question: string; status: "pending" | "done" | "error"; answer: string | null; tools_used: string[] };
 
 export type ScenarioInput = {
+  symbol?: string;
   side: "long" | "short";
   entry: number | null;
   units: number;
@@ -269,6 +273,8 @@ export type ScenarioInput = {
 };
 type Pcts = { p5: number; p25: number; p50: number; p75: number; p95: number };
 export type Scenario = {
+  symbol?: string;
+  market?: { symbol: string; name: string; decimals: number; unit: string; spread: number; swap_per_night: number };
   entry: number;
   side: "long" | "short";
   trading_days: number;
@@ -469,6 +475,7 @@ export type PlanStats = {
   wiped_out: boolean;
 };
 export type PlanInput = {
+  symbol?: string;
   profile?: RiskProfile["profile"] | null;
   tf: "1d" | "1h";
   years: number;
@@ -497,6 +504,7 @@ export type PlanResult = {
   score: number | null;
 };
 export type Plan = {
+  symbol?: string;
   profile: RiskProfile["profile"];
   profile_label: string;
   limits: { max_risk_per_trade_pct: number; max_drawdown_pct: number; max_leverage: number };
@@ -518,6 +526,7 @@ export type PlanOptions = {
 };
 
 export type AgentConfig = {
+  symbol?: string;
   strategy: string;
   params: Record<string, number>;
   rules?: Rules | null;
@@ -583,7 +592,7 @@ export type Lab = {
 };
 
 export type PriceAlert = {
-  id: number; price: number; direction: "above" | "below"; note: string;
+  id: number; symbol?: string; price: number; direction: "above" | "below"; note: string;
   created_at: string; triggered_at: string | null; triggered_price: number | null;
 };
 export type Insight = { key: string; tone: "warn" | "info" | "good"; title: string; metric: string; body: string };
@@ -594,12 +603,12 @@ export type ReplayTradeIn = { side: "long" | "short"; units: number; entry_bar: 
 export type ReplaySettled = ReplayTradeIn & { entry_price: number; exit_price: number; reason: "closed" | "stop" | "target"; pnl: number };
 export type ReplayScore = { balance: number; return_pct: number; max_drawdown_pct: number; trades: number; wins: number; detail: ReplaySettled[] };
 export type Replay = {
-  tf: ReplayTf; day: string; start: number; end: number; context: ReplayBar[]; bars: ReplayBar[];
+  tf: ReplayTf; symbol?: string; day: string; start: number; end: number; context: ReplayBar[]; bars: ReplayBar[];
   balance: number; leverage: number; range: { first: string; last: string };
 };
 export type SessionTf = ReplayTf;
 export type SessionSummary = {
-  id: number; name: string; tf: SessionTf; blind: boolean; finished: boolean; start: string | null; end: string | null;
+  id: number; name: string; symbol?: string; tf: SessionTf; blind: boolean; finished: boolean; start: string | null; end: string | null;
   progress: { shown: number; trades: number }; result: ReplayScore | null; created_at: string; updated_at: string;
 };
 export type Session = SessionSummary & {
@@ -610,7 +619,7 @@ export type Session = SessionSummary & {
 export type BoardRow = { rank: number; nickname: string | null; return_pct: number; max_drawdown_pct: number; trades: number; me: boolean };
 export type Board = { players: number; top: BoardRow[]; mine: (BoardRow & { public: boolean }) | null };
 export type Challenge = {
-  week: string; ends: string; tf: ReplayTf; start: number; end: number;
+  week: string; ends: string; tf: ReplayTf; symbol?: string; start: number; end: number;
   rules: { balance: number; leverage: number; risk_pct: number };
   context: ReplayBar[]; bars: ReplayBar[]; board: Board; nickname: string | null;
   last_week: (Board & { week: string }) | null;
@@ -634,7 +643,7 @@ export type LevelBar = { o: number; h: number; l: number; c: number };
 export type DailyResult = {
   choice: DailyChoice; right: boolean; pnl_1000: number; against_pct: number;
   end_price: number; move_pct: number; high_pct: number; low_pct: number; best: DailyChoice;
-  price: number; at: number; future: LevelBar[]; symbol: string;
+  price: number; at: number; future: LevelBar[]; symbol: string; market?: string; decimals?: number;
   crowd: { buy: number; sell: number; wait: number; total: number };
   you: { streak: number; played: number; right: number } | null;
 };
@@ -675,7 +684,7 @@ export type Dna = {
 export type BailEpisode = { start: number; price: number; window: number; worst_pct: number; months: { t: number; level: number }[] };
 
 export const api = {
-  stayOrBail: () => call<{ episodes: BailEpisode[] }>("/risk/stay-or-bail"),
+  stayOrBail: (symbol?: string) => call<{ episodes: BailEpisode[]; symbol?: string; name?: string }>(withSym("/risk/stay-or-bail", symbol)),
   propDna: () => call<Dna>("/prop/dna"),
   coachTwin: () => call<Twin>("/coach/twin"),
   daily: () => call<DailyCandle>("/daily"),
@@ -687,17 +696,18 @@ export const api = {
   markers: (start: number, end: number, scheduled = true) =>
     call<ChartMarker[]>(`/calendar/markers?start=${start}&end=${end}&scheduled=${scheduled}`),
   alerts: () => call<PriceAlert[]>("/practice/alerts"),
-  addAlert: (price: number, note = "") => call<PriceAlert>("/practice/alerts", { method: "POST", body: JSON.stringify({ price, note }) }),
+  addAlert: (price: number, note = "", symbol?: string) =>
+    call<PriceAlert>("/practice/alerts", { method: "POST", body: JSON.stringify({ price, note, ...(symbol ? { symbol } : {}) }) }),
   deleteAlert: (id: number) => call<void>(`/practice/alerts/${id}`, { method: "DELETE" }),
   checkAlerts: () => call<{ triggered: PriceAlert[]; price: number | null }>("/practice/alerts/check", { method: "POST" }),
   insights: (source: "paper" | "journal") => call<Insights>(`/practice/insights?source=${source}`),
-  replay: (o: { day?: string; tf: ReplayTf }) =>
-    call<Replay>(`/practice/replay?tf=${o.tf}${o.day ? `&day=${o.day}` : ""}`),
-  replaySettle: (b: { tf: ReplayTf; start: number; end: number; trades: ReplayTradeIn[] }) =>
+  replay: (o: { day?: string; tf: ReplayTf; symbol?: string }) =>
+    call<Replay>(withSym(`/practice/replay?tf=${o.tf}${o.day ? `&day=${o.day}` : ""}`, o.symbol)),
+  replaySettle: (b: { tf: ReplayTf; start: number; end: number; trades: ReplayTradeIn[]; symbol?: string }) =>
     call<ReplayScore>("/practice/replay/settle", { method: "POST", body: JSON.stringify(b) }),
   sessions: () => call<SessionSummary[]>("/practice/sessions"),
   session: (id: number) => call<Session>(`/practice/sessions/${id}`),
-  newSession: (b: { tf: SessionTf; start?: string | null; end?: string | null; blind: boolean; name?: string }) =>
+  newSession: (b: { symbol?: string; tf: SessionTf; start?: string | null; end?: string | null; blind: boolean; name?: string }) =>
     call<Session>("/practice/sessions", { method: "POST", body: JSON.stringify(b) }),
   saveSession: (id: number, state: unknown) =>
     call<{ ok: boolean }>(`/practice/sessions/${id}`, { method: "PUT", body: JSON.stringify({ state }) }),
@@ -722,13 +732,13 @@ export const api = {
   customList: () => call<SavedStrategy[]>("/custom-strategies"),
   customSave: (rules: Rules, id?: number) =>
     call<SavedStrategy>(id ? `/custom-strategies/${id}` : "/custom-strategies", { method: id ? "PUT" : "POST", body: JSON.stringify({ rules }) }),
-  customPreview: (b: { rules: Rules; tf: "1d" | "1h"; years: number; stop_loss_pct: number | null }) =>
+  customPreview: (b: { rules: Rules; symbol?: string; tf: "1d" | "1h"; years: number; stop_loss_pct: number | null }) =>
     call<CustomPreview>("/custom-strategies/preview", { method: "POST", body: JSON.stringify(b) }),
-  customSweep: (b: { rules: Rules; tf: "1d" | "1h"; years: number; stop_loss_pct: number | null; lane: string; index: number;
+  customSweep: (b: { rules: Rules; symbol?: string; tf: "1d" | "1h"; years: number; stop_loss_pct: number | null; lane: string; index: number;
     side: "left" | "right"; field: "n" | "m" | "value"; values: number[] }) =>
     call<SweepRow[]>("/custom-strategies/sweep", { method: "POST", body: JSON.stringify(b) }),
-  customDraft: (text: string) =>
-    call<{ rules: Rules; explanation: string; possible: boolean; description: string }>("/custom-strategies/draft", { method: "POST", body: JSON.stringify({ text }) }),
+  customDraft: (text: string, symbol?: string) =>
+    call<{ rules: Rules; explanation: string; possible: boolean; description: string }>("/custom-strategies/draft", { method: "POST", body: JSON.stringify({ text, symbol }) }),
   customDelete: (id: number) => call<{ ok: boolean }>(`/custom-strategies/${id}`, { method: "DELETE" }),
   me: () => call<User>("/auth/me"),
   signup: (email: string, password: string, name: string) =>

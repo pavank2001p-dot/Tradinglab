@@ -1,4 +1,4 @@
-"""AI assistant: answers questions about gold and the user's own results with Claude.
+"""AI assistant: answers questions about gold, the other markets in app.instruments and the user's own results with Claude.
 
 Every number in an answer must come from a tool that reads the site's data (prices, backtests,
 the trade log, news, the calendar), never from the model's memory. Answers run in the background;
@@ -17,6 +17,7 @@ from psycopg.types.json import Jsonb
 from pydantic import BaseModel, Field, ValidationError, model_validator
 
 from . import backtest, calendar, config, custom, db, fit, news, paper, prices, risk
+from . import instruments as ins
 from .auth import UserOut, current_user
 from .trades import log_report
 
@@ -27,7 +28,9 @@ MAX_TURNS = 12  # model calls per question; building a strategy takes a few test
 MAX_SECONDS = 150
 MAX_HISTORY = 10
 
-SYSTEM = """You are the Trading Lab assistant, built into an educational trading website. You focus on gold (XAU/USD).
+SYMBOL_PROP = {"type": "string", "description": "Market symbol, such as EURUSD, USA500IDXUSD, BTCUSD or AAPLUSUSD; default XAUUSD (gold)"}
+
+SYSTEM = """You are the Trading Lab assistant, built into an educational trading website. You focus on gold (XAU/USD) by default, and every price, backtest and strategy tool also works on the site's other markets: pass their symbol (""" + ", ".join(f"{i.symbol} = {i.name}" for i in ins.ENABLED) + """). Use the market the user names; otherwise gold.
 
 What you do
 - Explain gold prices, strategies, backtests, risk and news in plain English for people who may be new to trading.
@@ -41,8 +44,8 @@ Rules you always follow
 - When suggesting a trade size, base it on the user's risk profile limits and the profile_fit tool, and present it as what would have stayed within their own limits.
 - When asked what went wrong with a strategy or how to handle a situation, use diagnose_strategy or my_agent. Explain the findings with their dates and the kind of market at the time, and present fixes only as changes that were tested on past prices with the results the tool gave, including whether they held up on the last 30%. Say that a fix that helped in the past may not help in future.
 - Keep answers short: a few sentences or a short list. Use the user's currency (USD) and say "ounces" for size.
-- When asked to build, design or invent a strategy, write it yourself as rules with test_rules, which tests it on past prices without saving it. You may adjust and re-test a few times (at most about four versions), judging each version on the earlier 70% of the period and then checking it held up on the last 30%; don't tune to the last 30%. Then save the version you'll describe with save_strategy and give the link it returns as a markdown link, e.g. [Open it in the builder](/strategies/builder?id=12). Describe the rules in plain words, show the test results (including the last 30% and buy and hold), and say if it did worse than simply holding gold. Build with what the rules can express; if the idea needs something else (volume, news, other markets, time of day), say what you left out. Update an existing saved strategy only when the user asks for that one to be changed.
-- If asked about something unrelated to gold, markets or this site, say briefly that you can only help with those topics."""
+- When asked to build, design or invent a strategy, write it yourself as rules with test_rules, which tests it on past prices without saving it. You may adjust and re-test a few times (at most about four versions), judging each version on the earlier 70% of the period and then checking it held up on the last 30%; don't tune to the last 30%. Then save the version you'll describe with save_strategy and give the link it returns as a markdown link, e.g. [Open it in the builder](/strategies/builder?id=12). Describe the rules in plain words, show the test results (including the last 30% and buy and hold), and say if it did worse than simply holding the market. Build with what the rules can express; if the idea needs something else (volume, news, other markets, time of day), say what you left out. Update an existing saved strategy only when the user asks for that one to be changed.
+- If asked about something unrelated to markets or this site, say briefly that you can only help with those topics."""
 
 # ---------------------------------------------------------------------------
 # Tools
@@ -81,16 +84,17 @@ TOOLS = [
         "name": "price_summary",
         "description": "Latest XAU/USD price, 24-hour change, returns over 1 week, 1 month, 3 months, 1 year and "
         "year to date, the 52-week high and low, average daily range, and where the data comes from.",
-        "input_schema": _obj({}),
+        "input_schema": _obj({"symbol": SYMBOL_PROP}),
     },
     {
         "name": "price_history",
-        "description": "Gold prices between two dates: open, close, high, low, return, and up to 60 evenly spaced "
-        "daily closes. Daily data starts in 2003; for earlier dates (back to 1833) it returns monthly prices "
-        "instead.",
+        "description": "Prices of a market (gold by default) between two dates: open, close, high, low, return, and up to 60 "
+        "evenly spaced daily closes. Gold's daily data starts in 2003 (for earlier dates, back to 1833, it returns monthly "
+        "prices instead); other markets start around 2015.",
         "input_schema": _obj({
             "start": {"type": "string", "format": "date", "description": "YYYY-MM-DD"},
             "end": {"type": "string", "format": "date", "description": "YYYY-MM-DD, exclusive; omit for today"},
+            "symbol": SYMBOL_PROP,
         }, ["start"]),
     },
     {
@@ -105,7 +109,7 @@ TOOLS = [
     },
     {
         "name": "run_backtest",
-        "description": "Run a backtest on stored gold prices and return its statistics (not saved). Fills at the "
+        "description": "Run a backtest on stored prices of a market (gold by default) and return its statistics (not saved). Fills at the "
         "next bar's open and charges spread and overnight swap. Settings not given use the defaults.",
         "input_schema": _obj({
             "strategy": {"type": "string", "enum": list(backtest.STRATEGIES)},
@@ -118,9 +122,11 @@ TOOLS = [
             "end": {"type": "string", "format": "date"},
             "direction": {"type": "string", "enum": ["both", "long_only", "short_only"]},
             "capital": {"type": "number", "description": "Starting balance in USD; default 10000"},
-            "units": {"type": "number", "description": "Ounces per trade; default 5"},
+            "units": {"type": "number", "description": "Units per trade (ounces, shares, currency units...); default "
+                      "the market's usual size"},
             "stop_loss_pct": {"type": "number"},
             "take_profit_pct": {"type": "number"},
+            "symbol": SYMBOL_PROP,
         }, ["strategy"]),
     },
     {
@@ -170,7 +176,7 @@ TOOLS = [
         "name": "diagnose_strategy",
         "description": "Backtest a strategy over the last N years and explain what went wrong: losses by kind of market "
         "(uptrend, downtrend, sideways), direction, stops against volatility, costs, losing streaks, the worst drawdown "
-        "with the Fed and inflation dates and gold headlines from then, plus fixes re-tested on the same prices and on "
+        "with the Fed and inflation dates and headlines from then, plus fixes re-tested on the same prices and on "
         "the last 30% alone. Trades are sized as a % of the account.",
         "input_schema": _obj({
             "strategy": {"type": "string", "enum": [k for k in backtest.STRATEGIES if k != "buy_and_hold"]},
@@ -182,11 +188,12 @@ TOOLS = [
             "stop_loss_pct": {"type": "number", "description": "Default 3"},
             "size_pct": {"type": "number", "description": "Position value as % of the account; default 33"},
             "years": {"type": "number", "description": "How far back to test; default 5"},
+            "symbol": SYMBOL_PROP,
         }, ["strategy"]),
     },
     {
         "name": "test_rules",
-        "description": "Test a strategy you write yourself as rules, on past gold prices, without saving it. Returns the "
+        "description": "Test a strategy you write yourself as rules, on past prices of a market (gold by default), without saving it. Returns the "
         "rules in plain words and results for the whole period, the earlier 70% and the last 30% alone (unseen when "
         "judging the earlier part), with buy and hold over the same days. Each trade uses the whole account (no "
         "leverage) unless size_pct is set.\n\n" + RULES_HELP,
@@ -198,6 +205,7 @@ TOOLS = [
             "stop_loss_pct": {"type": "number", "description": "Stop loss as % of entry price; default none"},
             "take_profit_pct": {"type": "number"},
             "size_pct": {"type": "number", "description": "Position value as % of the account; default 100"},
+            "symbol": SYMBOL_PROP,
         }, ["rules"]),
     },
     {
@@ -219,9 +227,17 @@ TOOLS = [
 ]
 
 
-def _daily_closes(start: datetime | None = None, end: datetime | None = None) -> list[dict]:
+def _sym(i: dict) -> str:
+    """The market a tool call names, or gold. An unknown symbol is an error the model can read and correct."""
+    try:
+        return ins.get(i.get("symbol")).symbol
+    except KeyError:
+        raise ValueError(f"Unknown market {i.get('symbol')}. Markets: {', '.join(m.symbol for m in ins.ENABLED)}")
+
+
+def _daily_closes(start: datetime | None = None, end: datetime | None = None, symbol: str = config.SYMBOL) -> list[dict]:
     sql = "SELECT extract(epoch FROM ts)::bigint AS t, open AS o, high AS h, low AS l, close AS c FROM candles WHERE symbol = %s AND tf = '1d'"
-    args: list = [config.SYMBOL]
+    args: list = [symbol]
     if start:
         sql += " AND ts >= %s"
         args.append(start)
@@ -240,16 +256,19 @@ def _pct(a: float, b: float) -> float:
     return round((b / a - 1) * 100, 2)
 
 
-def t_price_summary(_: dict, user_id: int) -> dict:
-    s = prices.summary()
+def t_price_summary(i: dict, user_id: int) -> dict:
+    sym = _sym(i)
+    dec = ins.get(sym).decimals
+    s = prices.summary(sym)
     if s.get("price") is None:
         return {"error": "No price data is loaded yet."}
     year_ago = datetime.now(timezone.utc) - timedelta(days=400)
-    bars = _daily_closes(year_ago)
+    bars = _daily_closes(year_ago, None, sym)
     out = {
-        "price": round(s["price"], 2),
+        "market": s["name"], "symbol": sym,
+        "price": round(s["price"], dec),
         "as_of": datetime.fromtimestamp(s["as_of"], timezone.utc).isoformat(timespec="minutes"),
-        "change_24h": None if s["change_24h"] is None else round(s["change_24h"], 2),
+        "change_24h": None if s["change_24h"] is None else round(s["change_24h"], dec),
         "change_24h_pct": None if s["change_24h_pct"] is None else round(s["change_24h_pct"], 2),
         "data_source": s["source"],
         "data_starts": _day(s["first_bar"]),
@@ -269,8 +288,8 @@ def t_price_summary(_: dict, user_id: int) -> dict:
         out.update({
             "return_1w_pct": back(7), "return_1m_pct": back(30), "return_3m_pct": back(91), "return_1y_pct": back(365),
             "return_ytd_pct": _pct(ytd[-1]["c"], last) if ytd else None,
-            "high_52w": round(max(b["h"] for b in year), 2), "low_52w": round(min(b["l"] for b in year), 2),
-            "avg_daily_range_14d": round(sum(b["h"] - b["l"] for b in recent[1:]) / max(len(recent) - 1, 1), 2),
+            "high_52w": round(max(b["h"] for b in year), dec), "low_52w": round(min(b["l"] for b in year), dec),
+            "avg_daily_range_14d": round(sum(b["h"] - b["l"] for b in recent[1:]) / max(len(recent) - 1, 1), dec),
         })
     return out
 
@@ -282,9 +301,9 @@ def _date(v: str | None) -> datetime | None:
     return datetime(d.year, d.month, d.day, tzinfo=timezone.utc)
 
 
-def _monthly(start: datetime | None, end: datetime | None) -> list[dict]:
+def _monthly(start: datetime | None, end: datetime | None, symbol: str = config.SYMBOL) -> list[dict]:
     sql = "SELECT extract(epoch FROM ts)::bigint AS t, open AS o, high AS h, low AS l, close AS c FROM candles WHERE symbol = %s AND tf = '1mo'"
-    args: list = [config.SYMBOL]
+    args: list = [symbol]
     if start:
         sql += " AND ts >= %s"
         args.append(start)
@@ -297,10 +316,11 @@ def _monthly(start: datetime | None, end: datetime | None) -> list[dict]:
 
 def t_price_history(i: dict, user_id: int) -> dict:
     start, end = _date(i["start"]), _date(i.get("end"))
-    bars = _daily_closes(start, end)
+    sym = _sym(i)
+    bars = _daily_closes(start, end, sym)
     if not bars or (start and bars[0]["t"] - start.timestamp() > 45 * 86400):
         # The range starts before the daily data: use monthly prices (annual averages before 1960).
-        months = _monthly(start, end)
+        months = _monthly(start, end, sym)
         if months:
             step = max(1, len(months) // 60)
             return {
@@ -312,7 +332,7 @@ def t_price_history(i: dict, user_id: int) -> dict:
                 "prices": [[_day(m["t"])[:7], round(m["c"], 2)] for m in months[::step]],
             }
     if not bars:
-        return {"error": "No prices in that range. Monthly prices start in 1833."}
+        return {"error": "No prices in that range. Gold's monthly prices start in 1833; other markets around 2015."}
     step = max(1, len(bars) // 60)
     hi = max(bars, key=lambda b: b["h"])
     lo = min(bars, key=lambda b: b["l"])
@@ -448,13 +468,14 @@ def _brief(stats: dict) -> dict:
 
 def t_test_rules(i: dict, user_id: int) -> dict:
     rules = custom.Rules(**i["rules"])
+    sym = _sym(i)
     tf = i.get("tf") or "1d"
     years = min(max(float(i.get("years") or TEST_YEARS[tf]), 0.5), 25)
     start = date.today() - timedelta(days=round(years * 365.25))
-    cfg = backtest.BacktestIn(strategy="custom", rules=rules, tf=tf, start=start, capital=10_000,
+    cfg = backtest.BacktestIn(strategy="custom", symbol=sym, rules=rules, tf=tf, start=start, capital=10_000,
                               size_pct=i.get("size_pct") or 100, direction=i.get("direction") or "both",
                               stop_loss_pct=i.get("stop_loss_pct"), take_profit_pct=i.get("take_profit_pct"))
-    bars = backtest.load_bars(tf, start, None)
+    bars = backtest.load_bars(tf, start, None, sym)
     if len(bars) < 100:
         return {"error": "Not enough price history for that period."}
     cut = int(len(bars) * IN_SAMPLE)
@@ -464,7 +485,7 @@ def t_test_rules(i: dict, user_id: int) -> dict:
         r = backtest.run(cfg, part)
         parts[label] = {"start": _day(part[0]["t"]), "end": _day(part[-1]["t"]), **_brief(r["stats"])}
     return {"rules_in_words": custom.describe(rules), "rules": rules.model_dump(),
-            "settings": {"tf": tf, "years": years, "direction": cfg.direction, "size_pct": cfg.size_pct,
+            "settings": {"symbol": sym, "tf": tf, "years": years, "direction": cfg.direction, "size_pct": cfg.size_pct,
                          "stop_loss_pct": cfg.stop_loss_pct, "take_profit_pct": cfg.take_profit_pct},
             "whole_period": {"start": _day(bars[0]["t"]), "end": _day(bars[-1]["t"]), **_brief(whole["stats"])},
             **parts}

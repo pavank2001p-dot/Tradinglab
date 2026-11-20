@@ -7,10 +7,12 @@ import ShareButton, { resultShare } from "@/components/ShareCard";
 import DescribeBox from "@/components/studio/DescribeBox";
 import TunePanel from "@/components/studio/TunePanel";
 import TradeChart from "@/components/TradeChart";
+import MarketPicker from "@/components/markets/MarketPicker";
 import { CountUp, Icon } from "@/components/ui";
 import {
   api, type Condition, type CustomCatalog, type CustomPreview, type IndicatorSpec, type Operand, type Rules, type SavedStrategy,
 } from "@/lib/api";
+import { GOLD, ticker, useMarket } from "@/lib/markets";
 import { clampOperand, mRange, nRange, sanitizeRules } from "@/lib/ruleBounds";
 import { useUser } from "@/lib/useUser";
 
@@ -125,6 +127,7 @@ const pct = (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(1)}%`;
 
 export default function BuilderPage() {
   const { user } = useUser();
+  const [market, setSymbol, markets] = useMarket();
   const [cat, setCat] = useState<CustomCatalog | null>(null);
   const [mine, setMine] = useState<SavedStrategy[]>([]);
   const [rules, setRules] = useState<Rules>(EMPTY);
@@ -173,13 +176,13 @@ export default function BuilderPage() {
     const id = ++seq.current;
     setLoading(true);
     const t = setTimeout(() => {
-      api.customPreview({ rules, tf: test.tf, years: test.years, stop_loss_pct: test.stop })
+      api.customPreview({ rules, symbol: market.symbol, tf: test.tf, years: test.years, stop_loss_pct: test.stop })
         .then((r) => { if (id === seq.current) { setLive(r); setLiveErr(null); } })
         .catch((e) => { if (id === seq.current) setLiveErr(e instanceof Error ? e.message : "Couldn't test these rules"); })
         .finally(() => { if (id === seq.current) setLoading(false); });
     }, 650);
     return () => clearTimeout(t);
-  }, [rules, test, user, cat, ready]);
+  }, [rules, test, user, cat, ready, market.symbol]);
 
   const text = useMemo(() => (cat ? sentence(rules, cat) : ""), [rules, cat]);
   if (user === null) return <SignInPrompt what="build your own strategies" next="/strategies/builder" />;
@@ -256,8 +259,8 @@ export default function BuilderPage() {
             <span className="bg-gradient-to-r from-gold via-gold-hi to-gold bg-clip-text text-transparent">Watch it trade.</span>
           </h1>
           <p className="mt-4 max-w-2xl text-muted">
-            Snap indicators together into rules. Every change is tested on real gold prices in a moment, with each buy and
-            sell drawn on the chart.
+            Snap indicators together into rules. Every change is tested on real prices of the market you pick (gold, forex,
+            indices, stocks, oil or crypto) in a moment, with each buy and sell drawn on the chart.
           </p>
           <ol className="mt-7 flex flex-wrap gap-x-8 gap-y-3 text-sm">
             {["Pick an idea", "Shape the rules", "See every trade"].map((s, i) => (
@@ -271,7 +274,7 @@ export default function BuilderPage() {
       </section>
 
       <div className="mt-6">
-        <DescribeBox onRules={(r, n) => { start(r, null); setNote(n); }} />
+        <DescribeBox symbol={market.symbol} onRules={(r, n) => { start(r, null); setNote(n); }} />
       </div>
 
       {/* Templates */}
@@ -359,7 +362,7 @@ export default function BuilderPage() {
             ))}
             <span>Signals are read on each candle&apos;s close and filled at the next open.</span>
           </div>
-          <TunePanel rules={rules} cat={cat} test={test} onChange={setRules} />
+          <TunePanel rules={rules} cat={cat} test={{ ...test, symbol: market.symbol }} onChange={setRules} />
         </div>
 
         {/* Live preview */}
@@ -369,6 +372,9 @@ export default function BuilderPage() {
               <span className={`h-2 w-2 rounded-full ${loading ? "animate-pulse bg-gold" : live ? "breathe bg-up" : "bg-muted"}`} />
               <h2 className="font-semibold">Live preview</h2>
               <span className="ml-auto text-xs text-muted">{loading ? "Testing…" : live ? `${live.trades.length} trades` : ""}</span>
+            </div>
+            <div className="px-4 pt-3">
+              <MarketPicker market={market} markets={markets} onChange={setSymbol} />
             </div>
             <div className="flex flex-wrap gap-1.5 px-4 pt-3">
               {(["1d", "1h"] as const).map((tf) => (
@@ -397,7 +403,7 @@ export default function BuilderPage() {
               ) : liveErr && !live ? (
                 <p className="px-4 py-16 text-center text-sm text-down">{liveErr}</p>
               ) : live ? (
-                <TradeChart data={live} height={260} />
+                <TradeChart data={live} height={260} decimals={market.decimals} />
               ) : (
                 <div className="mx-4 h-[260px] animate-pulse rounded-xl bg-surface-2" />
               )}
@@ -411,9 +417,9 @@ export default function BuilderPage() {
                   <Stat label="In the market" value={live!.in_market_pct} format={(v) => `${v.toFixed(0)}%`} />
                 </div>
                 <div className="space-y-1.5 rounded-xl border border-border bg-background/60 p-3 text-xs">
-                  {[["Your rules", ret, "var(--gold)"], ["Owning gold", hold, "var(--muted)"]].map(([l, v, c]) => (
+                  {[["Your rules", ret, "var(--gold)"], [`Owning ${market.symbol === GOLD.symbol ? "gold" : ticker(market)}`, hold, "var(--muted)"]].map(([l, v, c]) => (
                     <div key={l as string} className="flex items-center gap-2">
-                      <span className="w-20 shrink-0 text-muted">{l as string}</span>
+                      <span className="w-24 shrink-0 truncate text-muted">{l as string}</span>
                       <div className="relative h-2 flex-1 rounded-full bg-surface-2">
                         <div className="bar-grow absolute inset-y-0 left-0 rounded-full" style={{ width: `${Math.min(Math.abs((v as number) ?? 0) / scale, 1) * 100}%`, background: c as string, opacity: (v as number) < 0 ? 0.5 : 1 }} />
                       </div>
@@ -426,7 +432,7 @@ export default function BuilderPage() {
                     $10,000, each trade the size of the account (no leverage), with spread and swap. Past results don&apos;t predict future ones.
                   </p>
                   <ShareButton className="shrink-0" data={resultShare("Strategy studio", rules.name || "My strategy",
-                    `XAU/USD · ${test.tf === "1d" ? "daily" : "hourly"} candles · last ${test.years} year${test.years === 1 ? "" : "s"}${test.stop ? ` · ${test.stop}% stop` : ""}`,
+                    `${ticker(market)} · ${test.tf === "1d" ? "daily" : "hourly"} candles · last ${test.years} year${test.years === 1 ? "" : "s"}${test.stop ? ` · ${test.stop}% stop` : ""}`,
                     st, live!.equity)} />
                 </div>
               </div>

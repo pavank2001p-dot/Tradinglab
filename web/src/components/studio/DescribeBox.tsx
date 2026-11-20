@@ -13,7 +13,7 @@ const EXAMPLES = [
 ];
 
 /** Type an idea in plain words; the AI turns it into rules the studio can test straight away. */
-export default function DescribeBox({ onRules }: { onRules: (r: Rules, note: string) => void }) {
+export default function DescribeBox({ onRules, symbol }: { onRules: (r: Rules, note: string) => void; symbol?: string }) {
   const [on, setOn] = useState<boolean | null>(null);
   const [text, setText] = useState("");
   const [busy, setBusy] = useState(false);
@@ -28,7 +28,7 @@ export default function DescribeBox({ onRules }: { onRules: (r: Rules, note: str
     setBusy(true);
     setErr(null);
     try {
-      const r = await api.customDraft(t.trim());
+      const r = await api.customDraft(t.trim(), symbol);
       onRules(r.rules, r.explanation);
       toast(`Drafted: ${r.rules.name}`, { tone: "badge", body: r.possible ? "Check the rules below, then watch it trade." : "Some of that can't be expressed here, so this is the closest version." });
     } catch (e) {
@@ -52,7 +52,7 @@ export default function DescribeBox({ onRules }: { onRules: (r: Rules, note: str
         <form onSubmit={(e) => { e.preventDefault(); go(); }} className="mt-4 flex flex-col gap-2 sm:flex-row">
           <textarea value={text} onChange={(e) => setText(e.target.value)} rows={2} maxLength={600}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); go(); } }}
-            placeholder="e.g. Buy when gold pulls back to its 50-day average in an uptrend, and get out if RSI goes above 70"
+            placeholder="e.g. Buy when the price pulls back to its 50-day average in an uptrend, and get out if RSI goes above 70"
             className="min-h-[3.25rem] flex-1 resize-none rounded-2xl border border-border bg-background/70 px-4 py-3 text-sm outline-none transition focus:border-gold" />
           <button type="submit" disabled={busy || text.trim().length < 8}
             className="flex items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-gold-hi to-gold px-5 py-3 text-sm font-semibold text-black transition-[filter] hover:brightness-105 disabled:opacity-50">

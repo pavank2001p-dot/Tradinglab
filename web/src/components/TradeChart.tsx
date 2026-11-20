@@ -12,7 +12,7 @@ const REPLAY_MS = 7000;
 
 /** Candles with an arrow at every entry and a dot at every exit, so a rule change shows up as moved trades.
  *  Replay plays the period back candle by candle, with the trades appearing as they happen. */
-export default function TradeChart({ data, height = 300 }: { data: CustomPreview; height?: number }) {
+export default function TradeChart({ data, height = 300, decimals = 2 }: { data: CustomPreview; height?: number; decimals?: number }) {
   const box = useRef<HTMLDivElement>(null);
   const themeKey = useThemeKey();
   const parts = useRef<{ chart: IChartApi; series: ISeriesApi<"Candlestick">; markers: ISeriesMarkersPluginApi<Time>; marks: SeriesMarker<UTCTimestamp>[] } | null>(null);
@@ -35,7 +35,7 @@ export default function TradeChart({ data, height = 300 }: { data: CustomPreview
     });
     const s = chart.addSeries(CandlestickSeries, {
       upColor: v("--up"), downColor: v("--down"), borderVisible: false, wickUpColor: v("--up"), wickDownColor: v("--down"),
-      priceLineVisible: false,
+      priceLineVisible: false, priceFormat: { type: "price", precision: decimals, minMove: 10 ** -decimals },
     });
     s.setData(data.candles.map((b) => ({ time: b.t as UTCTimestamp, open: b.o, high: b.h, low: b.l, close: b.c })));
     const first = data.candles[0]?.t ?? 0;
@@ -67,7 +67,7 @@ export default function TradeChart({ data, height = 300 }: { data: CustomPreview
       parts.current = null;
       chart.remove();
     };
-  }, [data, themeKey]);
+  }, [data, themeKey, decimals]);
 
   // Replay: reveal candles and trades over a few seconds, with a running profit and loss.
   useEffect(() => {

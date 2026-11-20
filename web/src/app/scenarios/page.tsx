@@ -3,7 +3,9 @@
 import { useEffect, useRef, useState } from "react";
 import SignInPrompt from "@/components/SignInPrompt";
 import { PageHeader } from "@/components/ui";
-import { api, type Scenario, type ScenarioInput } from "@/lib/api";
+import MarketPicker from "@/components/markets/MarketPicker";
+import { api, type Market, type Scenario, type ScenarioInput } from "@/lib/api";
+import { GOLD, ticker, unitsLabel, useMarket } from "@/lib/markets";
 import { useUser } from "@/lib/useUser";
 
 const input = "w-full rounded-lg border border-border bg-background px-3 py-1.5 outline-none focus:border-gold";
@@ -16,7 +18,11 @@ const HORIZONS = [
 ];
 const money = (v: number, sign = false) =>
   `${sign && v > 0 ? "+" : v < 0 ? "-" : ""}$${Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 0 })}`;
-const price = (v: number) => `$${v.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const price = (v: number, d = 2) => `$${v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+const roundTo = (v: number, d: number) => Math.round(v * 10 ** d) / 10 ** d;
+/** What the market is called in a sentence: "gold", "EUR/USD" or "the S&P 500". */
+const called = (m: Pick<Market, "symbol" | "name" | "asset_class">) =>
+  m.symbol === GOLD.symbol ? "gold" : m.asset_class === "indices" ? `the ${m.name}` : m.asset_class === "forex" ? ticker(m) : m.name;
 const day = (t: number, year = false) =>
   new Date(t * 1000).toLocaleDateString("en-US", { month: "short", day: "numeric", ...(year ? { year: "numeric" } : {}), timeZone: "UTC" });
 
@@ -63,6 +69,7 @@ function FanChart({ s, stop, target }: { s: Scenario; stop: number | null; targe
   const ticks = Array.from({ length: 5 }, (_, i) => lo + ((hi - lo) * (i + 0.5)) / 5)
     .filter((v) => levels.every((l) => Math.abs(y(v) - y(l)) > 14)); // keep labels from overlapping
   const hb = hover !== null ? s.bands[hover] : null;
+  const d = s.market?.decimals ?? 2;
 
   function move(e: React.PointerEvent<SVGSVGElement>) {
     const r = e.currentTarget.getBoundingClientRect();
@@ -88,7 +95,7 @@ function FanChart({ s, stop, target }: { s: Scenario; stop: number | null; targe
         {ticks.map((v) => (
           <g key={v}>
             <line x1={padL} x2={w - padR} y1={y(v)} y2={y(v)} stroke="var(--border)" />
-            <text x={w - padR + 4} y={y(v) + 4} fontSize={10} fill="var(--muted)">{Math.round(v).toLocaleString()}</text>
+            <text x={w - padR + 4} y={y(v) + 4} fontSize={10} fill="var(--muted)">{d <= 2 ? Math.round(v).toLocaleString() : v.toFixed(Math.min(d, 4))}</text>
           </g>
         ))}
         <line x1={x(start.t)} x2={x(start.t)} y1={padT} y2={h - padB} stroke="var(--border)" strokeDasharray="2 3" />
@@ -114,9 +121,9 @@ function FanChart({ s, stop, target }: { s: Scenario; stop: number | null; targe
         <div className="pointer-events-none absolute top-2 rounded-lg border border-border bg-background/95 px-3 py-2 text-xs shadow-lg"
           style={{ left: Math.min(Math.max(x(hb.t) + 12, 8), w - 190) }}>
           <p className="font-medium">{day(hb.t, true)}</p>
-          <p className="mt-1 tabular-nums text-muted">9 in 10 paths: <span className="text-foreground">{price(hb.p5)} – {price(hb.p95)}</span></p>
-          <p className="tabular-nums text-muted">Half of paths: <span className="text-foreground">{price(hb.p25)} – {price(hb.p75)}</span></p>
-          <p className="tabular-nums text-muted">Middle path: <span className="text-gold">{price(hb.p50)}</span></p>
+          <p className="mt-1 tabular-nums text-muted">9 in 10 paths: <span className="text-foreground">{price(hb.p5, d)} – {price(hb.p95, d)}</span></p>
+          <p className="tabular-nums text-muted">Half of paths: <span className="text-foreground">{price(hb.p25, d)} – {price(hb.p75, d)}</span></p>
+          <p className="tabular-nums text-muted">Middle path: <span className="text-gold">{price(hb.p50, d)}</span></p>
         </div>
       )}
       <div className="mt-2 flex flex-wrap gap-4 text-xs text-muted">
@@ -195,9 +202,11 @@ function OutcomeBar({ o }: { o: Scenario["outcomes"] }) {
 
 export default function ScenariosPage() {
   const { user } = useUser();
+  const [market, setSymbol, markets] = useMarket();
   const [form, setForm] = useState<ScenarioInput>({
     side: "long", entry: null, units: 1, stop: null, target: null, horizon_days: 30, lookback_years: 10, with_trend: false, capital: 10000,
   });
+  const dec = market.decimals;
   const [stopPct, setStopPct] = useState<number | null>(2);
   const [targetPct, setTargetPct] = useState<number | null>(4);
   const [latest, setLatest] = useState<number | null>(null);
@@ -205,14 +214,19 @@ export default function ScenariosPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // A new market starts from its own latest price and usual trade size, and runs again.
+  const ran = useRef<string | null>(null);
   useEffect(() => {
-    api.summary().then((x) => x.price && setLatest(Math.round(x.price * 100) / 100), () => {});
-  }, []);
+    setLatest(null);
+    setS(null);
+    setForm((f) => ({ ...f, entry: null, units: market.default_units }));
+    api.summary(market.symbol).then((x) => x.price && setLatest(roundTo(x.price, market.decimals)), () => {});
+  }, [market.symbol, market.decimals, market.default_units]);
 
   const entry = form.entry ?? latest;
   const dir = form.side === "long" ? 1 : -1;
-  const stop = entry && stopPct ? Math.round(entry * (1 - (dir * stopPct) / 100) * 100) / 100 : null;
-  const target = entry && targetPct ? Math.round(entry * (1 + (dir * targetPct) / 100) * 100) / 100 : null;
+  const stop = entry && stopPct ? roundTo(entry * (1 - (dir * stopPct) / 100), dec) : null;
+  const target = entry && targetPct ? roundTo(entry * (1 + (dir * targetPct) / 100), dec) : null;
   const set = (p: Partial<ScenarioInput>) => setForm({ ...form, ...p });
 
   async function run(e?: React.FormEvent) {
@@ -220,7 +234,7 @@ export default function ScenariosPage() {
     setBusy(true);
     setError(null);
     try {
-      setS(await api.scenario({ ...form, entry, stop, target }));
+      setS(await api.scenario({ ...form, symbol: market.symbol, entry, stop, target }));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Couldn't run the scenario");
     } finally {
@@ -228,11 +242,10 @@ export default function ScenariosPage() {
     }
   }
 
-  // Run once with the defaults as soon as the latest price is known.
-  const ran = useRef(false);
+  // Run once with the defaults as soon as the market's latest price is known.
   useEffect(() => {
-    if (user && latest && !ran.current) {
-      ran.current = true;
+    if (user && latest && ran.current !== market.symbol && form.units === market.default_units) {
+      ran.current = market.symbol;
       run();
     }
   });
@@ -246,7 +259,8 @@ export default function ScenariosPage() {
   return (
     <div className="mx-auto grid max-w-6xl grid-cols-1 gap-6 px-4 py-8 lg:grid-cols-[320px_minmax(0,1fr)]">
       <form onSubmit={run} className="space-y-4">
-        <PageHeader icon="scenarios" title="Trade scenarios" subtitle="See the range of outcomes gold's past moves make possible for a trade you open today." />
+        <PageHeader icon="scenarios" title="Trade scenarios" subtitle={`See the range of outcomes ${called(market)}'s past moves make possible for a trade you open today.`} />
+        <MarketPicker market={market} markets={markets} onChange={setSymbol} />
 
         <div className="grid grid-cols-2 gap-1 rounded-lg border border-border p-1">
           {(["long", "short"] as const).map((side) => (
@@ -264,9 +278,9 @@ export default function ScenariosPage() {
               onChange={(e) => set({ entry: e.target.value === "" ? null : Number(e.target.value) })} />
           </label>
           <label className="block text-sm">
-            <span className="text-muted">Ounces</span>
-            <input type="number" step="any" min={0.01} className={`${input} mt-1`} value={form.units}
-              onChange={(e) => set({ units: Number(e.target.value) || 1 })} />
+            <span className="text-muted capitalize">{unitsLabel(market)}</span>
+            <input type="number" step="any" min={0} className={`${input} mt-1`} value={form.units}
+              onChange={(e) => set({ units: Number(e.target.value) || market.default_units })} />
           </label>
         </div>
 
@@ -280,7 +294,7 @@ export default function ScenariosPage() {
                 <input type="checkbox" checked={f.v !== null} onChange={(e) => f.setV(e.target.checked ? f.max / 10 : null)} className="accent-[var(--gold)]" />
                 {f.label}
               </label>
-              {f.v !== null && <span className="tabular-nums">{f.v.toFixed(1)}%{f.px ? ` · ${price(f.px)}` : ""}</span>}
+              {f.v !== null && <span className="tabular-nums">{f.v.toFixed(1)}%{f.px ? ` · ${price(f.px, dec)}` : ""}</span>}
             </div>
             {f.v !== null && (
               <input type="range" min={0.2} max={f.max} step={0.1} value={f.v} onChange={(e) => f.setV(Number(e.target.value))}
@@ -327,8 +341,8 @@ export default function ScenariosPage() {
 
       <section className="min-w-0 space-y-5">
         <div className="rounded-lg border border-gold/30 bg-gold/5 px-4 py-3 text-xs leading-relaxed text-muted">
-          <b className="text-foreground">This is not a forecast.</b> Each scenario strings together real trading days picked at random from
-          gold&apos;s history, to show how far and how often the price has moved. It can&apos;t know what happens next, and it isn&apos;t advice to trade.
+          <b className="text-foreground">This is not a forecast.</b> Each scenario strings together real trading days picked at random from{" "}
+          {called(market)}&apos;s history, to show how far and how often the price has moved. It can&apos;t know what happens next, and it isn&apos;t advice to trade.
         </div>
 
         {!s ? (
@@ -339,7 +353,7 @@ export default function ScenariosPage() {
           <div className={`space-y-5 transition-opacity ${busy ? "opacity-50" : ""}`}>
             <div className="rounded-2xl border border-border bg-surface p-4">
               <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="font-medium">Where gold could be by {day(s.bands[s.bands.length - 1].t, true)}</h2>
+                <h2 className="font-medium">Where {called(market)} could be by {day(s.bands[s.bands.length - 1].t, true)}</h2>
                 <p className="text-xs text-muted">Hover the chart for any date</p>
               </div>
               <FanChart s={s} stop={stop} target={target} />
@@ -381,8 +395,8 @@ export default function ScenariosPage() {
                     {s.checkpoints.map((c) => (
                       <tr key={c.label} className="border-t border-border">
                         <td className="px-3 py-2">{c.label}</td>
-                        <td className="px-3 py-2">{price(c.p5)} – {price(c.p95)}</td>
-                        <td className="px-3 py-2">{price(c.p50)}</td>
+                        <td className="px-3 py-2">{price(c.p5, s.market?.decimals)} – {price(c.p95, s.market?.decimals)}</td>
+                        <td className="px-3 py-2">{price(c.p50, s.market?.decimals)}</td>
                         <td className="px-3 py-2 text-right">{c.above_entry_pct.toFixed(0)}%</td>
                       </tr>
                     ))}
@@ -405,7 +419,7 @@ export default function ScenariosPage() {
                 {s.profile && <p className="text-xs text-muted">Your limit: {s.profile.max_leverage}x</p>}
               </div>
               <div className="rounded-2xl border border-border bg-surface p-4">
-                <p className="text-xs text-muted">Gold&apos;s yearly swings</p>
+                <p className="text-xs text-muted">{s.market?.name ?? "Gold"}&apos;s yearly swings</p>
                 <p className="mt-1 text-lg font-semibold tabular-nums">±{s.history.yearly_volatility_pct}%</p>
                 <p className="text-xs text-muted">from {s.history.days.toLocaleString()} trading days{s.history.from ? ` since ${day(s.history.from, true)}` : ""}</p>
               </div>

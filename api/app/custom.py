@@ -266,6 +266,7 @@ class SavedIn(BaseModel):
 
 class PreviewIn(BaseModel):
     rules: Rules
+    symbol: str = Field("XAUUSD", description="Market to test on (see /prices/markets)")
     tf: Literal["1d", "1h"] = "1d"
     years: float = Field(3, ge=0.25, le=25)
     stop_loss_pct: float | None = Field(None, gt=0, le=50)
@@ -281,8 +282,11 @@ def preview(body: PreviewIn) -> dict:
     from . import backtest as bt
 
     start = date.today() - timedelta(days=round(body.years * 365.25))
-    cfg = bt.BacktestIn(strategy="custom", rules=body.rules, tf=body.tf, start=start, capital=10_000, size_pct=100,
-                        stop_loss_pct=body.stop_loss_pct)
+    try:
+        cfg = bt.BacktestIn(strategy="custom", symbol=body.symbol, rules=body.rules, tf=body.tf, start=start,
+                            capital=10_000, size_pct=100, stop_loss_pct=body.stop_loss_pct)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
     bars = bt.load_bars(cfg.tf, cfg.start, None, cfg.symbol)
     if len(bars) < 30:
         raise HTTPException(422, "Not enough price history for that period yet")
@@ -296,6 +300,7 @@ def preview(body: PreviewIn) -> dict:
         "candles": [{k: b[k] for k in ("t", "o", "h", "l", "c")} for b in bars[-PREVIEW_BARS:]],
         "in_market_pct": round(sum(1 for x in sig if x) / len(sig) * 100, 1),
         "description": describe(body.rules),
+        "symbol": cfg.symbol,
     }
 
 
@@ -317,7 +322,13 @@ def sweep(body: SweepIn) -> list[dict]:
     if body.index >= len(conds):
         raise ValueError("That condition doesn't exist")
     start = date.today() - timedelta(days=round(body.years * 365.25))
-    bars = bt.load_bars(body.tf, start, None)
+    from . import instruments as ins
+
+    try:
+        symbol = ins.get(body.symbol).symbol
+    except KeyError:
+        raise ValueError(f"Unknown market {body.symbol}")
+    bars = bt.load_bars(body.tf, start, None, symbol)
     if len(bars) < 30:
         raise ValueError("Not enough price history for that period yet")
     out = []
@@ -329,8 +340,8 @@ def sweep(body: SweepIn) -> list[dict]:
         except ValueError:
             out.append({"value": v, "ok": False})
             continue
-        cfg = bt.BacktestIn(strategy="custom", rules=rules, tf=body.tf, start=start, capital=10_000, size_pct=100,
-                            stop_loss_pct=body.stop_loss_pct)
+        cfg = bt.BacktestIn(strategy="custom", symbol=symbol, rules=rules, tf=body.tf, start=start, capital=10_000,
+                            size_pct=100, stop_loss_pct=body.stop_loss_pct)
         st = bt.run(cfg, bars)["stats"]
         out.append({"value": v, "ok": True, "return_pct": st["total_return_pct"], "max_drawdown_pct": st["max_drawdown_pct"],
                     "trades": st["trades"], "win_rate_pct": st["win_rate_pct"]})
@@ -376,9 +387,9 @@ def catalogue_text() -> str:
         + (f"; m = {v['m'][0].lower()} (default {v['m'][1]})" if "m" in v else "") for k, v in INDICATORS.items())
 
 
-def _draft_system() -> str:
+def _draft_system(market: str = "gold (XAU/USD)") -> str:
     inds = catalogue_text()
-    return f"""You turn a trader's description of a gold (XAU/USD) trading idea into rules for a strategy builder.
+    return f"""You turn a trader's description of a trading idea for {market} into rules for a strategy builder.
 
 A strategy has four lists of conditions: long_entry, long_exit, short_entry, short_exit. All conditions in a list
 must hold on a candle's close for it to fire. An entry on the other side also closes a position, so exits are optional.
@@ -392,11 +403,11 @@ The left operand can never be a plain number. "highest" and "lowest" look at the
 Keep the user's numbers when they give them; otherwise use common defaults. Give the strategy a short name (under 40
 characters). Set possible to false only if the idea needs something these indicators can't express (such as volume,
 news or other markets); then build the closest version you can and say what you left out. In explanation, write one or
-two plain sentences for a beginner about what the rules do, without predicting whether gold will rise or fall and
+two plain sentences for a beginner about what the rules do, without predicting whether the market will rise or fall and
 without recommending the strategy."""
 
 
-def draft(user_id: int, text: str) -> dict:
+def draft(user_id: int, text: str, symbol: str | None = None) -> dict:
     import json
     from datetime import date
 
@@ -414,7 +425,7 @@ def draft(user_id: int, text: str) -> dict:
         resp = client.beta.messages.create(
             model=config.ASSISTANT_MODEL,
             max_tokens=4000,
-            system=_draft_system(),
+            system=_draft_system(_market_words(symbol)),
             messages=[{"role": "user", "content": text}],
             output_config={"effort": "low", "format": {"type": "json_schema", "schema": DRAFT_SCHEMA}},
             betas=["server-side-fallback-2026-07-01"],
@@ -437,6 +448,17 @@ def draft(user_id: int, text: str) -> dict:
 
 class DraftIn(BaseModel):
     text: str = Field(min_length=8, max_length=600)
+    symbol: str | None = Field(None, description="The market the idea is for; gold if left out")
+
+
+def _market_words(symbol: str | None) -> str:
+    from . import instruments as ins
+
+    try:
+        m = ins.get(symbol)
+    except KeyError:
+        m = ins.GOLD
+    return f"{m.name} ({m.symbol}, {m.class_label.lower()})"
 
 
 def _row(r: dict) -> dict:
@@ -489,7 +511,7 @@ def sweep_route(body: SweepIn, user: UserOut = Depends(current_user)):
 
 @router.post("/draft")
 def draft_route(body: DraftIn, user: UserOut = Depends(current_user)):
-    return draft(user.id, body.text.strip())
+    return draft(user.id, body.text.strip(), body.symbol)
 
 
 @router.get("")

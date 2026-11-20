@@ -7,6 +7,7 @@ import ReplaySummary from "@/components/practice/ReplaySummary";
 import SignInPrompt from "@/components/SignInPrompt";
 import { Icon, PageHeader } from "@/components/ui";
 import { api, type Board, type Challenge, type ReplaySettled, type ReplayTradeIn } from "@/lib/api";
+import { GOLD, useMarkets } from "@/lib/markets";
 import { TF_LABEL } from "@/lib/replay";
 import { useUser } from "@/lib/useUser";
 
@@ -65,6 +66,8 @@ function OptIn({ board, nickname, onChange }: { board: Board; nickname: string |
 export default function ChallengePage() {
   const { user } = useUser();
   const [ch, setCh] = useState<Challenge | null>(null);
+  const markets = useMarkets();
+  const market = markets.find((m) => m.symbol === (ch?.symbol ?? GOLD.symbol)) ?? GOLD;
   const [playing, setPlaying] = useState(false);
   const [done, setDone] = useState<ReplaySettled[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -92,12 +95,12 @@ export default function ChallengePage() {
   return (
     <div className="mx-auto max-w-6xl space-y-5 px-4 py-8">
       <PageHeader icon="trophy" title="Weekly replay challenge"
-        subtitle="Everyone trades the same stretch of past gold prices this week. One go each, with a stop on every trade."
+        subtitle="Everyone trades the same stretch of past prices this week, on a market that changes every week. One go each, with a stop on every trade."
         right={<Link href="/paper/replay" className="basis-full rounded-full text-center sm:basis-auto border border-border px-4 py-1.5 text-sm hover:border-gold/40">Practise on any day</Link>} />
       {error && <p role="alert" className="text-sm text-down">{error}</p>}
       {!ch ? !error && <div className="h-64 animate-pulse rounded-2xl bg-surface-2" /> : playing ? (
         <div className="space-y-4">
-          <ReplayPlayer bars={ch.bars} context={ch.context} balance={ch.rules.balance} leverage={ch.rules.leverage} riskPct={ch.rules.risk_pct} onFinish={submit} />
+          <ReplayPlayer bars={ch.bars} context={ch.context} balance={ch.rules.balance} leverage={ch.rules.leverage} riskPct={ch.rules.risk_pct} market={market} onFinish={submit} />
           {done && (
             <ReplaySummary done={done} balance={ch.rules.balance}>
               <p className="mt-3 text-sm text-muted">
@@ -126,7 +129,7 @@ export default function ChallengePage() {
               </>
             ) : (
               <>
-                <h2 className="mt-2 text-2xl font-bold">A mystery {ch.tf === "1h" ? "week" : "day"} of gold</h2>
+                <h2 className="mt-2 text-2xl font-bold">A mystery {ch.tf === "1h" ? "week" : "day"} of {market.symbol === GOLD.symbol ? "gold" : market.name}</h2>
                 <p className="mt-1 text-sm text-muted">{ch.bars.length} {TF_LABEL[ch.tf]} candles, revealed one at a time. The date stays hidden until the end.</p>
                 <ul className="mt-4 space-y-2 text-sm">
                   {[

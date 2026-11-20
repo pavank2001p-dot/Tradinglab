@@ -1,4 +1,5 @@
-"""Stay or Bail: feel a bad year of gold in your own money, one month at a time.
+"""Stay or Bail: feel a bad year of a market in your own money, one month at a time (gold by default; any market
+in app.instruments, whose monthly history starts when its stored prices do).
 
 Episodes are the twelve-month stretches since 1971 (when gold began to trade freely) with the deepest fall from
 the starting month, picked from the stored monthly closes so they never overlap. Each comes with the twelve months
@@ -12,7 +13,7 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter
 
-from . import prices
+from . import config, prices
 
 router = APIRouter(prefix="/risk", tags=["risk"])
 
@@ -47,8 +48,9 @@ def pick(closes: list[float], n: int = EPISODES) -> list[int]:
 
 
 @router.get("/stay-or-bail")
-def stay_or_bail():
-    bars = prices.candles(tf="1mo", start=int(SINCE.timestamp()), end=None, limit=2000, symbol="XAUUSD")["bars"]
+def stay_or_bail(symbol: str = config.SYMBOL):
+    inst = prices.market(symbol)
+    bars = prices.candles(tf="1mo", start=int(SINCE.timestamp()), end=None, limit=2000, symbol=inst.symbol)["bars"]
     closes = [b["c"] for b in bars]
     out = []
     for s in pick(closes):
@@ -56,6 +58,6 @@ def stay_or_bail():
         seg = bars[s:s + WINDOW + AFTER + 1]
         months = [{"t": b["t"], "level": round(b["c"] / base * 100, 2)} for b in seg]
         low = min(m["level"] for m in months[:WINDOW + 1])
-        out.append({"start": bars[s]["t"], "price": round(base, 2), "months": months, "window": WINDOW,
+        out.append({"start": bars[s]["t"], "price": inst.round(base), "months": months, "window": WINDOW,
                     "worst_pct": round(low - 100, 1)})
-    return {"episodes": out}
+    return {"symbol": inst.symbol, "name": inst.name, "episodes": out}

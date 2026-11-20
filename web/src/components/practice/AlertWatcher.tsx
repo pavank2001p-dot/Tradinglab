@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect } from "react";
-import { api, fmtPrice } from "@/lib/api";
+import { api } from "@/lib/api";
+import { fmtMarketPrice, GOLD, loadMarkets } from "@/lib/markets";
 import { useUser } from "@/lib/useUser";
 import { toast } from "../Toaster";
 
@@ -15,10 +16,13 @@ export default function AlertWatcher() {
     if (!user) return;
     const check = () => {
       if (document.visibilityState !== "visible" && !("Notification" in window && Notification.permission === "granted")) return;
-      api.checkAlerts().then(({ triggered }) => {
+      api.checkAlerts().then(async ({ triggered }) => {
         if (!triggered.length) return;
+        const list = await loadMarkets().then((m) => m.markets, () => []);
         for (const a of triggered) {
-          const title = `Gold ${a.direction === "above" ? "rose to" : "fell to"} ${fmtPrice(a.price)}`;
+          const m = list.find((x) => x.symbol === (a.symbol ?? GOLD.symbol)) ?? GOLD;
+          const fmtPrice = (p: number) => fmtMarketPrice(p, m);
+          const title = `${m.name} ${a.direction === "above" ? "rose to" : "fell to"} ${fmtPrice(a.price)}`;
           const body = a.note || `Your alert was reached${a.triggered_price ? `; the price is now ${fmtPrice(a.triggered_price)}` : ""}.`;
           toast(title, { body, tone: a.direction === "above" ? "up" : "down" });
           try {
