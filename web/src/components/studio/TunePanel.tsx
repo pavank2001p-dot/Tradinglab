@@ -139,6 +139,7 @@ export default function TunePanel({ rules, cat, test, onChange }: {
                       <p className="mt-2 text-xs text-muted">
                         Tap a bar to use that value.{best && <> The best past return was at <b className="text-foreground">{best.value}</b>, </>}
                         but a setting that only works at one exact value is usually luck. Look for a broad plateau.
+                        The range test uses the first 70% of the period only, so the last 30% stays a fair check in the preview.
                       </p>
                     </>
                   )}

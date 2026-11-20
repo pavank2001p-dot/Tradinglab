@@ -6,6 +6,7 @@ import SignInPrompt from "@/components/SignInPrompt";
 import ShareButton, { resultShare } from "@/components/ShareCard";
 import DescribeBox from "@/components/studio/DescribeBox";
 import TunePanel from "@/components/studio/TunePanel";
+import TrustPanel from "@/components/TrustPanel";
 import TradeChart from "@/components/TradeChart";
 import { CountUp, Icon } from "@/components/ui";
 import {
@@ -421,6 +422,7 @@ export default function BuilderPage() {
                     </div>
                   ))}
                 </div>
+                {live!.robustness && st.trades > 0 && <TrustPanel robustness={live!.robustness} split={live!.split} compact />}
                 <div className="flex items-start gap-3">
                   <p className="flex-1 text-[11px] leading-relaxed text-muted">
                     $10,000, each trade the size of the account (no leverage), with spread and swap. Past results don&apos;t predict future ones.
