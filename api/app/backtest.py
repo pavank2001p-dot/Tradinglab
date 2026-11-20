@@ -5,6 +5,7 @@ strategy never trades on information it could not have had. Stored prices are bi
 longs buy at bid + spread and sell at bid; shorts sell at bid and buy back at bid + spread.
 """
 
+import logging
 import math
 from collections import deque
 from datetime import date, datetime, timedelta, timezone
@@ -21,6 +22,7 @@ from .custom import Rules
 from .custom import signals as custom_signals
 from .report import build_report, trading_date
 
+log = logging.getLogger("backtest")
 router = APIRouter(prefix="/backtests", tags=["backtests"])
 
 # ---------------------------------------------------------------------------
@@ -776,9 +778,10 @@ class BacktestIn(BaseModel):
     swap_short: float | None = Field(None, ge=-10_000, le=10_000, description="USD per unit per night held short")
     stop_loss_pct: float | None = Field(None, gt=0, le=50)
     take_profit_pct: float | None = Field(None, gt=0, le=200)
-    realistic_fills: bool = Field(False, description=(
+    realistic_fills: bool = Field(True, description=(
         "Wider spreads at the rollover and around high-impact releases, and stops that slip past their price "
-        "around releases (see app/fills.py)"))
+        "around releases (see app/fills.py). On by default, like the paper account, so a test is never kinder "
+        "than trading the same rules on paper"))
 
     @property
     def market(self) -> ins.Instrument:
@@ -832,11 +835,28 @@ class BacktestIn(BaseModel):
         return self
 
 
+def conditions_for(bars: list[dict]) -> "fills.Conditions":
+    """The release times over these bars, for realistic fills. If the calendar can't be read the test still
+    runs, with the rollover only."""
+    start = datetime.fromtimestamp(bars[0]["t"], timezone.utc)
+    end = datetime.fromtimestamp(bars[-1]["t"], timezone.utc) + timedelta(days=1)
+    try:
+        with db.conn() as c:
+            return fills.load(c, start, end)
+    except Exception:  # noqa: BLE001 - a missing calendar must not stop a backtest
+        log.warning("Could not load release times for realistic fills", exc_info=True)
+        return fills.Conditions()
+
+
 def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = None) -> dict:
     """Run a test. `cond` (release times) makes fills realistic: on hourly bars the spread at each bar's
-    open follows the rollover and releases, and on any bar a stop slips when a release falls inside it."""
+    open follows the rollover and releases, and on any bar a stop slips when a release falls inside it.
+    When `cond` isn't given it is loaded here if cfg.realistic_fills is on, so every caller (the backtest
+    page, the strategy builder's preview and sweep, the agent) tests with the same costs."""
     if len(bars) < 2:
         raise ValueError("Not enough price data in that date range")
+    if cond is None and cfg.realistic_fills:
+        cond = conditions_for(bars)
     target = signals(cfg.strategy, cfg.params, bars, cfg.rules)
     allow = {"both": (1, -1), "long_only": (1,), "short_only": (-1,)}[cfg.direction]
     base_sp, u = cfg.spread, cfg.units
@@ -849,6 +869,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     cash = cfg.capital
     pos = 0  # 1 long, -1 short
     entry = entry_t = 0.0
+    entry_cost = 0.0  # spread paid on the way in, per unit
     swap_acc = 0.0
     blocked = 0  # side stopped out; wait for the signal to change before re-entering
     trades: list[dict] = []
@@ -856,9 +877,11 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
     in_market = 0
     wiped_out = False
 
-    def close(t: int, bid: float, reason: str):
+    def close(t: int, bid: float, reason: str, slip_paid: float = 0.0):
         nonlocal cash, pos, swap_acc
         exit_px = bid if pos == 1 else bid + sp
+        # Longs pay the spread when they buy, shorts when they buy back; slippage on a stop comes on top.
+        paid = (entry_cost if pos == 1 else sp) + slip_paid
         gross = (exit_px - entry) * u * pos
         pnl = gross + swap_acc
         cash += pnl
@@ -869,7 +892,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
             "entry_price": round(entry, 3),
             "exit_time": t,
             "exit_price": round(exit_px, 3),
-            "costs": round(sp * u, 2),
+            "costs": round(paid * u, 2),
             "swap": round(swap_acc, 2),
             "pnl": round(pnl, 2),
             "exit_reason": reason,
@@ -877,8 +900,8 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
         pos, swap_acc = 0, 0.0
 
     def open_(t: int, bid: float, side: int):
-        nonlocal pos, entry, entry_t, u
-        pos, entry, entry_t = side, (bid + sp if side == 1 else bid), t
+        nonlocal pos, entry, entry_t, entry_cost, u
+        pos, entry, entry_t, entry_cost = side, (bid + sp if side == 1 else bid), t, sp
         if cfg.size_pct:
             u = max(cash, 0) * cfg.size_pct / 100 / entry
 
@@ -913,7 +936,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
                 take = entry * (1 + cfg.take_profit_pct / 100) if cfg.take_profit_pct else None
                 if stop is not None and b["l"] <= stop:
                     slipped += slip > 0
-                    close(b["t"], min(b["o"], stop) - slip, "stop_loss")
+                    close(b["t"], min(b["o"], stop) - slip, "stop_loss", slip)
                 elif take is not None and b["h"] >= take:
                     close(b["t"], max(b["o"], take), "take_profit")
             else:  # short exits buy at the ask, i.e. bid + spread
@@ -921,7 +944,7 @@ def run(cfg: BacktestIn, bars: list[dict], cond: "fills.Conditions | None" = Non
                 take = entry * (1 - cfg.take_profit_pct / 100) if cfg.take_profit_pct else None
                 if stop is not None and b["h"] + sp >= stop:
                     slipped += slip > 0
-                    close(b["t"], max(b["o"] + sp, stop) - sp + slip, "stop_loss")
+                    close(b["t"], max(b["o"] + sp, stop) - sp + slip, "stop_loss", slip)
                 elif take is not None and b["l"] + sp <= take:
                     close(b["t"], min(b["o"] + sp, take) - sp, "take_profit")
             if not pos:
@@ -983,12 +1006,7 @@ def strategies():
 def create(cfg: BacktestIn, user: UserOut = Depends(current_user)):
     try:
         bars = load_bars(cfg.tf, cfg.start, cfg.end, cfg.symbol)
-        cond = None
-        if cfg.realistic_fills and bars:
-            with db.conn() as c:
-                cond = fills.load(c, datetime.fromtimestamp(bars[0]["t"], timezone.utc),
-                                  datetime.fromtimestamp(bars[-1]["t"], timezone.utc) + timedelta(days=1))
-        rep = run(cfg, bars, cond)
+        rep = run(cfg, bars)
     except ValueError as e:
         raise HTTPException(422, str(e))
     params = cfg.model_dump(mode="json")
