@@ -61,9 +61,13 @@ def test_extend_history_runs_once(client, monkeypatch):
     monkeypatch.setattr(ingest, "load", lambda source, start, end, i=None: calls.append((start, end)) or 7)
     ingest.upsert([ingest.Bar(datetime(2010, 1, 4, tzinfo=timezone.utc), 1, 1, 1, 1)])
     assert ingest.extend_history("sample") == 0 and not calls  # never for demo data
-    assert ingest.extend_history("dukascopy") == 7
-    assert calls == [(datetime(2003, 5, 1, tzinfo=timezone.utc), datetime(2010, 1, 4, tzinfo=timezone.utc))]
-    assert ingest.extend_history("dukascopy") == 0 and len(calls) == 1  # remembered
+    n = ingest.extend_history("dukascopy")
+    # Walks back a year at a time, each chunk ending where the next newer one starts, down to 2003.
+    assert calls[0][1] == datetime(2010, 1, 4, tzinfo=timezone.utc)
+    assert calls[-1][0] == datetime(2003, 5, 1, tzinfo=timezone.utc)
+    assert all(a[0] == b[1] for a, b in zip(calls, calls[1:]))
+    assert n == 7 * len(calls) == 7 * 7
+    assert ingest.extend_history("dukascopy") == 0 and len(calls) == 7  # remembered
 
 
 def test_assistant_uses_monthly_prices_before_daily_data(client):

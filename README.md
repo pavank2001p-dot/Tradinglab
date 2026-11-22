@@ -15,7 +15,7 @@ api/   FastAPI + Postgres (Railway). Auth, price data, and later backtests, news
 
 - **Chart** (`web/src/components/PriceChart.tsx`, `api/app/prices.py`, `api/app/live.py`): 13 timeframes
   from 1 second to 1 month, zoom, full screen and a live price. Hourly and daily bars go back to `HISTORY_SINCE` (2003-05-01);
-  minute bars cover the last `MINUTE_DAYS` (60) for gold and `MARKET_MINUTE_DAYS` (14) for other markets, and one-second bars the last `SECOND_DAYS` (2), from
+  minute bars cover the last `MINUTE_DAYS` (60) for gold and `MARKET_MINUTE_DAYS` (14) for other markets, or `INTRADAY_DAYS` (180) for the day-trading markets in `INTRADAY_SYMBOLS`, and one-second bars the last `SECOND_DAYS` (2), from
   Dukascopy. Other timeframes are aggregated on request. Live quotes stream from Finnhub's websocket
   (OANDA:XAU_USD) when `FINNHUB_API_KEY` is set (turn off with `LIVE_PRICES=false`); they move the newest
   candle and are saved as 1s/1m/1h bars until Dukascopy's data for that hour replaces them. The **All**
@@ -34,7 +34,12 @@ api/   FastAPI + Postgres (Railway). Auth, price data, and later backtests, news
   Ichimoku cloud, Heikin-Ashi, Aroon, Bollinger squeeze breakout and inside-bar breakout. Mean reversion: RSI, RSI(2)
   pullback, Fibonacci pullback, Bollinger bands, stochastic, CCI and Williams %R. Plus buy and hold as a benchmark.
   Signals on each close fill at the next open; spread, overnight swap, stop loss and take profit are modelled, and a
-  test stops if the account reaches zero. Results are saved per user. (VWAP and grid strategies aren't included: spot
+  test stops if the account reaches zero. Results are saved per user.
+  **Day trading**: tests also run on 5- and 15-minute candles (built from minute bars, which the markets in
+  `INTRADAY_SYMBOLS` keep for `INTRADAY_DAYS`, 180 by default), can open trades only in set hours (Tokyo, London,
+  New York, the London and New York overlap, or custom hours on any of those clocks), close everything at the
+  session's end or before the 17:00 New York rollover so no swap is paid, cap trades per day and stop for the day at
+  a daily loss limit. Intraday results add a day-by-day summary (green days, best and worst day, trades a day). (VWAP and grid strategies aren't included: spot
   gold has no reliable volume, and a grid holds many positions at once, which this engine doesn't model.)
 - **Strategy builder** (`api/app/custom.py`, `/strategies/builder`): users combine 21 indicators (price, averages,
   RSI, MACD, ADX, Bollinger bands, ATR and more) with "is above", "is below", "crosses above" and "crosses below" into
@@ -234,7 +239,12 @@ account's leverage applies up to it), spread and overnight swap.
   does the same by hand). A market it doesn't carry is left out of the list and checked again after a week.
 
 - History comes from the same free Dukascopy feed, no key needed, from `MARKET_HISTORY_SINCE`
-  (default 2015-01-01). Gold keeps its full history from 2003.
+  (default 2003-05-01, the same as gold). The feed starts each market at a different point (the main currency
+  pairs in 2003, many indices, stocks and crypto years later), and months before that are skipped. Markets loaded
+  from a later date are extended back once, a year at a time from their oldest price, so a run cut short leaves no
+  hole. The market list shows each market's first daily and minute price (`history_from`, `minutes_from`); the
+  strategy finder greys out periods longer than that, and a backtest that asks for earlier dates says where its
+  prices start.
 - Live quotes come from Finnhub's free websocket with the same `FINNHUB_API_KEY`: OANDA prices for
   metals, energy, forex and indices, US stock trades, and Binance for crypto. The free plan streams 50 symbols,
   so the core markets come first, then those in use (`LIVE_MAX`). A first quote far from the stored price is

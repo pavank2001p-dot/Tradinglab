@@ -9,7 +9,7 @@ import SignInPrompt from "@/components/SignInPrompt";
 import { Chips, Empty, Icon, PageHeader } from "@/components/ui";
 import Link from "next/link";
 import MarketPicker from "@/components/markets/MarketPicker";
-import { api, asStrategy, fmtPct, fmtUsd, type Backtest, type BacktestParams, type BacktestSummary, type Market, type SavedStrategy, type Strategy } from "@/lib/api";
+import { api, asStrategy, fmtPct, fmtUsd, type Backtest, type BacktestParams, type BacktestSummary, type BacktestTf, type DayStats, type Market, type SavedStrategy, type Strategy, type TradingHours } from "@/lib/api";
 import { GOLD, ticker, useMarket } from "@/lib/markets";
 import { useUser } from "@/lib/useUser";
 
@@ -33,7 +33,49 @@ const DEFAULTS: Omit<BacktestParams, "strategy" | "params"> = {
   commission_per_unit: null,
   commission_min: null,
   slippage: null,
+  session: "any",
+  session_start: null,
+  session_end: null,
+  session_tz: "America/New_York",
+  day_trade: false,
+  max_trades_per_day: null,
+  daily_loss_limit_pct: null,
 };
+
+const TF_LABEL: Record<BacktestTf, string> = { "5m": "5-minute", "15m": "15-minute", "1h": "hourly", "1d": "daily" };
+const SESSIONS: { key: TradingHours; label: string; hint: string }[] = [
+  { key: "any", label: "Any time", hint: "Trades can open at any hour the market is open." },
+  { key: "asia", label: "Tokyo", hint: "09:00 to 15:00 Tokyo time." },
+  { key: "london", label: "London", hint: "08:00 to 16:30 London time." },
+  { key: "new_york", label: "New York", hint: "09:30 to 16:00 New York time, the US stock market's hours." },
+  { key: "overlap", label: "London + New York", hint: "08:00 to 12:00 New York time, when both are open and markets move most." },
+  { key: "custom", label: "Custom hours", hint: "Your own hours. An end earlier than the start runs past midnight." },
+];
+const fmtDay = (iso: string) => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
+
+function DayStatsCard({ d }: { d: DayStats }) {
+  if (!d.traded) return null;
+  const cell = (label: string, value: string, tone?: "up" | "down") => (
+    <div className="rounded-xl border border-border bg-background px-3 py-2">
+      <p className="text-xs text-muted">{label}</p>
+      <p className={`mt-0.5 font-semibold tabular-nums ${tone === "up" ? "text-up" : tone === "down" ? "text-down" : ""}`}>{value}</p>
+    </div>
+  );
+  return (
+    <div className="rounded-2xl border border-border bg-surface p-4">
+      <h3 className="flex items-center gap-2 text-sm font-medium"><Icon name="calendar" className="h-4 w-4 text-gold" />Day by day</h3>
+      <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        {cell("Days traded", String(d.traded))}
+        {cell("Green days", d.green_pct == null ? "–" : `${d.green_pct}%`)}
+        {cell("Average day", d.avg_day == null ? "–" : fmtUsd(d.avg_day), (d.avg_day ?? 0) >= 0 ? "up" : "down")}
+        {cell("Best day", d.best == null ? "–" : fmtUsd(d.best), "up")}
+        {cell("Worst day", d.worst == null ? "–" : fmtUsd(d.worst), "down")}
+        {cell("Trades a day", d.avg_trades == null ? "–" : String(d.avg_trades))}
+      </div>
+      <p className="mt-2 text-xs text-muted">Days run from 17:00 to 17:00 New York, and each trade counts on the day it closed.</p>
+    </div>
+  );
+}
 
 /** A market's usual trade size and broker costs. A swap charged as a yearly % of the position is left empty
  *  so the server applies it. */
@@ -70,10 +112,11 @@ const label = (strategies: Strategy[], p: BacktestParams, markets: Market[] = []
 };
 
 const baseLabel = (strategies: Strategy[], p: BacktestParams) => {
-  if (p.strategy === "custom") return `${p.rules?.name ?? "Custom strategy"} · ${p.tf === "1h" ? "hourly" : "daily"}`;
+  const tf = `${TF_LABEL[p.tf] ?? p.tf}${p.day_trade ? " day trades" : ""}`;
+  if (p.strategy === "custom") return `${p.rules?.name ?? "Custom strategy"} · ${tf}`;
   const s = strategies.find((x) => x.key === p.strategy);
   const vals = Object.values(p.params);
-  return `${s?.label ?? p.strategy}${vals.length ? ` (${vals.join("/")})` : ""} · ${p.tf === "1h" ? "hourly" : "daily"}`;
+  return `${s?.label ?? p.strategy}${vals.length ? ` (${vals.join("/")})` : ""} · ${tf}`;
 };
 
 export default function BacktestPage() {
@@ -131,6 +174,18 @@ export default function BacktestPage() {
     key: "custom", label: form.rules?.name ?? "Custom strategy", summary: "", kind: "custom", kind_label: "Your strategy", params: [],
   };
   const set = (patch: Partial<BacktestParams>) => setForm({ ...form, ...patch });
+  const intraday = form.tf !== "1d";
+  const minuteTf = form.tf === "5m" || form.tf === "15m";
+  // The first day this market has prices for the chosen candles.
+  const dataFrom = minuteTf ? market.minutes_from : market.history_from;
+
+  function setTf(tf: BacktestTf) {
+    const patch: Partial<BacktestParams> = { tf };
+    // Minute data covers months, not years: start where it starts.
+    if ((tf === "5m" || tf === "15m") && market.minutes_from && form!.start < market.minutes_from) patch.start = market.minutes_from;
+    if (tf === "1d") Object.assign(patch, { session: "any", day_trade: false });
+    set(patch);
+  }
 
   function pick(key: string) {
     if (key.startsWith("custom:")) {
@@ -238,9 +293,11 @@ export default function BacktestPage() {
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="Candles">
-            <select className={input} value={form.tf} onChange={(e) => set({ tf: e.target.value as "1h" | "1d" })}>
+            <select className={input} value={form.tf} onChange={(e) => setTf(e.target.value as BacktestTf)}>
               <option value="1d">Daily</option>
               <option value="1h">Hourly</option>
+              <option value="15m">15 minutes</option>
+              <option value="5m">5 minutes</option>
             </select>
           </Field>
           <Field label="Trade">
@@ -251,12 +308,57 @@ export default function BacktestPage() {
             </select>
           </Field>
           <Field label="From">
-            <input type="date" className={input} value={form.start} min="2003-05-01" onChange={(e) => set({ start: e.target.value })} />
+            <input type="date" className={input} value={form.start} min={dataFrom ?? "2003-05-01"} onChange={(e) => set({ start: e.target.value })} />
           </Field>
           <Field label="To">
             <input type="date" className={input} value={form.end ?? ""} onChange={(e) => set({ end: e.target.value || null })} />
           </Field>
         </div>
+        {dataFrom ? (
+          <p className="-mt-2 text-xs text-muted">
+            {minuteTf ? "Minute prices" : "Prices"} for {market.name} start on {fmtDay(dataFrom)}.
+            {minuteTf && " 5- and 15-minute tests cover months, not years."}
+          </p>
+        ) : minuteTf ? (
+          <p className="-mt-2 text-xs text-muted">No minute prices for {market.name} yet. They load once the market has been opened.</p>
+        ) : null}
+
+        <details className="rounded-lg border border-border p-3" open={intraday}>
+          <summary className="cursor-pointer text-sm font-medium">Day trading</summary>
+          <div className="mt-3 space-y-3">
+            <Field label="Trading hours" hint={intraday ? SESSIONS.find((x) => x.key === (form.session ?? "any"))?.hint : "Pick hourly, 15-minute or 5-minute candles to set hours."}>
+              <select className={input} value={form.session ?? "any"} disabled={!intraday}
+                onChange={(e) => set({ session: e.target.value as TradingHours, ...(e.target.value === "custom" && !form.session_start ? { session_start: "09:30", session_end: "11:30" } : {}) })}>
+                {SESSIONS.map((x) => <option key={x.key} value={x.key}>{x.label}</option>)}
+              </select>
+            </Field>
+            {intraday && form.session === "custom" && (
+              <div className="grid grid-cols-3 gap-2">
+                <Field label="From"><input type="time" className={input} value={form.session_start ?? ""} onChange={(e) => set({ session_start: e.target.value })} /></Field>
+                <Field label="To"><input type="time" className={input} value={form.session_end ?? ""} onChange={(e) => set({ session_end: e.target.value })} /></Field>
+                <Field label="Clock">
+                  <select className={input} value={form.session_tz} onChange={(e) => set({ session_tz: e.target.value as BacktestParams["session_tz"] })}>
+                    <option value="America/New_York">New York</option>
+                    <option value="Europe/London">London</option>
+                    <option value="Asia/Tokyo">Tokyo</option>
+                    <option value="UTC">UTC</option>
+                  </select>
+                </Field>
+              </div>
+            )}
+            <label className={`flex items-start gap-2 text-sm ${intraday ? "" : "opacity-50"}`}>
+              <input type="checkbox" checked={!!form.day_trade} disabled={!intraday} className="mt-1 accent-[var(--gold)]"
+                onChange={(e) => set({ day_trade: e.target.checked })} />
+              <span>Close every trade the same day<span className="block text-xs text-muted">
+                {form.session && form.session !== "any" ? "At the end of the trading hours." : "Before the 17:00 New York rollover."} Nothing is held overnight, so no swap is paid.
+              </span></span>
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="Most trades a day"><Num value={form.max_trades_per_day} min={1} max={100} step={1} placeholder="no limit" onChange={(v) => set({ max_trades_per_day: v })} /></Field>
+              <Field label="Daily loss limit (%)" hint="Stops for the day"><Num value={form.daily_loss_limit_pct} min={0.1} max={50} placeholder="none" onChange={(v) => set({ daily_loss_limit_pct: v })} /></Field>
+            </div>
+          </div>
+        </details>
 
         <details className="rounded-lg border border-border p-3" open>
           <summary className="cursor-pointer text-sm font-medium">Money and risk</summary>
@@ -334,7 +436,14 @@ export default function BacktestPage() {
               )}
             </div>
             <div className="space-y-4">
+              {result.period && result.period.start * 1000 > Date.parse(`${result.params.start}T00:00:00Z`) + 30 * 864e5 && (
+                <p className="rounded-xl border border-border bg-surface px-3 py-2 text-sm text-muted">
+                  <Icon name="clock" className="mr-1.5 inline h-4 w-4 text-gold" />
+                  Prices for this market start on {new Date(result.period.start * 1000).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" })}, so the test starts there instead of {fmtDay(result.params.start)}.
+                </p>
+              )}
               {result.robustness && result.stats.trades > 0 && <TrustPanel robustness={result.robustness} split={result.split} />}
+              {result.days && <DayStatsCard d={result.days} />}
               <FitPanel load={() => api.backtestFit(result.id)} deps={[result.id]} />
               <ReportView report={result} kind="backtest" />
             </div>

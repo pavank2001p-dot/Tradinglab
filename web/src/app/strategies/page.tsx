@@ -143,10 +143,24 @@ export default function StrategiesPage() {
     });
   }, [user]);
 
+  // A market with less history than the years picked moves to the longest period it has.
+  useEffect(() => {
+    if (!opts || !market.history_from) return;
+    const have = (Date.now() - Date.parse(market.history_from)) / (365.25 * 864e5);
+    setForm((f) => {
+      if (f.years <= have + 0.3) return f;
+      const fit = opts.years[f.tf].filter((y) => y <= have + 0.3).at(-1);
+      return fit ? { ...f, years: fit } : f;
+    });
+  }, [market, opts]);
+
   if (user === null) return <SignInPrompt what="find strategies that fit your risk profile" next="/strategies" />;
   if (!user || !opts) return null;
 
   const set = (patch: Partial<PlanInput>) => setForm({ ...form, ...patch });
+  // Years of prices this market has (the feed starts some markets in 2012 or later).
+  const haveYears = market.history_from ? (Date.now() - Date.parse(market.history_from)) / (365.25 * 864e5) : null;
+  const tooLong = (y: number) => haveYears != null && y > haveYears + 0.3;
   const limits = opts.profiles[form.profile ?? "moderate"];
   const levChoices = [0.5, 1, 2, 3, 5, 10].filter((x) => x <= limits.max_leverage);
 
@@ -207,8 +221,15 @@ export default function StrategiesPage() {
           <label className="block text-sm">
             <Label>History</Label>
             <select className={input} value={form.years} onChange={(e) => set({ years: Number(e.target.value) })}>
-              {opts.years[form.tf].map((y) => <option key={y} value={y}>Last {y} year{y > 1 ? "s" : ""}</option>)}
+              {opts.years[form.tf].map((y) => (
+                <option key={y} value={y} disabled={tooLong(y)}>Last {y} year{y > 1 ? "s" : ""}{tooLong(y) ? " (not enough prices)" : ""}</option>
+              ))}
             </select>
+            {haveYears != null && haveYears < 20 && (
+              <span className="mt-1 block text-xs text-muted">
+                Prices go back to {new Date(market.history_from!).toLocaleDateString(undefined, { month: "short", year: "numeric", timeZone: "UTC" })}.
+              </span>
+            )}
           </label>
         </div>
 
