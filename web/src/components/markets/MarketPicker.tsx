@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { Market } from "@/lib/api";
 import { CLASSES, fmtMarketPrice, ticker } from "@/lib/markets";
 import { Icon } from "@/components/ui";
+import { useKeepInView } from "@/lib/useKeepInView";
 
 /** Every word a market can be found by: name, ticker, symbol, tags, sector or region, and asset class. */
 function haystack(m: Market): string {
@@ -30,6 +31,7 @@ export default function MarketPicker({ market, markets, onChange, className = ""
   market: Market; markets: Market[]; onChange: (symbol: string) => void; className?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const panel = useKeepInView<HTMLDivElement>(open);
   const [q, setQ] = useState("");
   const [cls, setCls] = useState<string>("all");
   const wrap = useRef<HTMLDivElement>(null);
@@ -68,7 +70,7 @@ export default function MarketPicker({ market, markets, onChange, className = ""
         <svg viewBox="0 0 24 24" className="h-3.5 w-3.5 text-muted" fill="none" stroke="currentColor" strokeWidth={2}><path d="m6 9 6 6 6-6" /></svg>
       </button>
       {open && (
-        <div className="absolute left-0 z-40 mt-1.5 w-[min(30rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
+        <div ref={panel} className="absolute left-0 z-40 mt-1.5 w-[min(30rem,calc(100vw-2rem))] overflow-hidden rounded-xl border border-border bg-surface shadow-xl">
           <div className="flex items-center gap-2 border-b border-border px-3">
             <Icon name="search" className="h-4 w-4 text-muted" />
             <input ref={search} value={q} onChange={(e) => setQ(e.target.value)}

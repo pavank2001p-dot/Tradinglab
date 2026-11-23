@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import ThemeMenu from "./ThemeMenu";
+import { useKeepInView } from "@/lib/useKeepInView";
 import { Icon } from "./ui";
 import { api } from "@/lib/api";
 import { useUser } from "@/lib/useUser";
@@ -65,6 +66,7 @@ function active(path: string, href: string) {
 
 function Menu({ group, path, t }: { group: (typeof GROUPS)[number]; path: string; t: T }) {
   const [open, setOpen] = useState(false);
+  const menu = useKeepInView<HTMLDivElement>(open);
   const ref = useRef<HTMLDivElement>(null);
   const on = group.items.some((i) => active(path, i.href));
   useEffect(() => setOpen(false), [path]);
@@ -88,7 +90,7 @@ function Menu({ group, path, t }: { group: (typeof GROUPS)[number]; path: string
         <Icon name="down" className={`h-3 w-3 transition-transform duration-300 ${open ? "rotate-180" : ""}`} />
       </button>
       {open && (
-        <div className="absolute left-1/2 top-full z-50 w-72 -translate-x-1/2 pt-2">
+        <div ref={menu} className="absolute left-1/2 top-full z-50 w-72 -translate-x-1/2 pt-2">
           <div className="rise-in rounded-2xl border border-border bg-surface p-2 shadow-2xl shadow-black/40">
             {group.items.map((i) => (
               <Link key={i.href} href={i.href} aria-current={active(path, i.href) ? "page" : undefined}

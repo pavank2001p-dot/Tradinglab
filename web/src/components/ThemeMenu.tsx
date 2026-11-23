@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ACCENTS, setAccent, setMode, useTheme, type Mode } from "@/lib/theme";
 import { LANGS, msg, setLang, useT } from "@/lib/i18n";
+import { useKeepInView } from "@/lib/useKeepInView";
 import { CURRENCIES, UNITS, UNIT_NAMES, setLocal, useLocalPrice } from "@/lib/localPrice";
 
 const MODES: { key: Mode; label: string; icon: React.ReactNode }[] = [
@@ -31,6 +32,7 @@ export default function ThemeMenu() {
   const { pref } = useLocalPrice();
   const draft = LANGS.find((l) => l.code === lang)?.draft;
   const [open, setOpen] = useState(false);
+  const panel = useKeepInView<HTMLDivElement>(open);
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!open) return;
@@ -52,7 +54,7 @@ export default function ThemeMenu() {
         <Glyph>{current.icon}</Glyph>
       </button>
       {open && (
-        <div className="rise-in absolute end-0 top-full z-50 mt-2 max-h-[calc(100dvh-80px)] w-72 overflow-y-auto rounded-2xl border border-border bg-surface p-3 shadow-2xl shadow-black/30">
+        <div ref={panel} className="rise-in absolute end-0 top-full z-50 mt-2 max-h-[calc(100dvh-80px)] w-72 overflow-y-auto rounded-2xl border border-border bg-surface p-3 shadow-2xl shadow-black/30">
           <p className={label}>{t("Appearance")}</p>
           <div className="mt-2 grid grid-cols-3 gap-1 rounded-xl bg-background p-1">
             {MODES.map((m) => (
