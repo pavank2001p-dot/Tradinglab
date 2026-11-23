@@ -24,6 +24,7 @@ import Drawings from "./chart/Drawings";
 import { IND_LIST, ema, macd, pts, rsi, sma, stdev, type IndKey } from "./chart/indicators";
 import { api, type Bar, type ChartMarker, type ChartTf, type LiveQuote, type Market } from "@/lib/api";
 import { usePref } from "@/lib/prefs";
+import { useKeepInView } from "@/lib/useKeepInView";
 import { GOLD, fmtMarketPrice, ticker } from "@/lib/markets";
 
 const GROUPS: { label: string; tfs: [ChartTf, string][] }[] = [
@@ -118,6 +119,7 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
   const eventsKey = useRef("");
   const markers = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
   const [indOpen, setIndOpen] = useState(false);
+  const indMenu = useKeepInView<HTMLDivElement>(indOpen);
   const [below, setBelow] = useState<HTMLDivElement | null>(null);
   const [legend, setLegend] = useState<Bar | null>(null);
   const [accent, setAccent] = useState("#e8b53e");
@@ -473,7 +475,7 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
                 <Icon d="M3 17l5-6 4 3 5-7 4 4" /> Indicators{inds.length ? ` · ${inds.length}` : ""}
               </button>
               {indOpen && (
-                <div className="rise-in absolute left-0 top-full z-20 mt-1 w-60 sm:left-auto sm:right-0 rounded-xl border border-border bg-surface p-1.5 shadow-2xl">
+                <div ref={indMenu} className="rise-in absolute left-0 top-full z-20 mt-1 w-60 sm:left-auto sm:right-0 rounded-xl border border-border bg-surface p-1.5 shadow-2xl">
                   {IND_LIST.map((i) => (
                     <label key={i.key} className="flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm hover:bg-surface-2">
                       <input type="checkbox" checked={inds.includes(i.key)} onChange={() => toggleInd(i.key)} className="accent-[var(--gold)]" />
