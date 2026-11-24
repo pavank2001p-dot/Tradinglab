@@ -56,6 +56,11 @@ CALENDAR_FEED_URL = os.getenv("CALENDAR_FEED_URL", "https://nfs.faireconomy.medi
 # Week 4: AI assistant. Uses ANTHROPIC_API_KEY; each user gets a fixed number of questions per UTC day.
 ASSISTANT_MODEL = os.getenv("ASSISTANT_MODEL", "claude-opus-5-5")
 ASSISTANT_DAILY_LIMIT = int(os.getenv("ASSISTANT_DAILY_LIMIT", "20"))
+# Claude market briefing: analysis of one market from the site's data, never a signal. Reused per market for
+# BRIEFING_CACHE_MINUTES; each user gets BRIEFING_DAILY_LIMIT new ones per UTC day.
+BRIEFING_MODEL = os.getenv("BRIEFING_MODEL", "claude-opus-5-5")
+BRIEFING_DAILY_LIMIT = int(os.getenv("BRIEFING_DAILY_LIMIT", "10"))
+BRIEFING_CACHE_MINUTES = int(os.getenv("BRIEFING_CACHE_MINUTES", "60"))
 
 # Exchange rates for the local gold price (ECB reference rates via Frankfurter, no key needed).
 FX_URL = os.getenv("FX_URL", "https://api.frankfurter.dev/v1/latest")

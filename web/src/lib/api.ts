@@ -313,6 +313,34 @@ export type Fit = {
 };
 export type Turn = { role: "user" | "assistant"; content: string };
 export type AssistantStatus = { configured: boolean; limit: number; used_today: number; remaining: number };
+type BriefSection = { summary: string; points: string[] };
+export type BriefingReport = {
+  headline: string;
+  news: BriefSection & { tone: "mostly_positive" | "mostly_negative" | "mixed" | "quiet" };
+  chart: BriefSection;
+  strategies: { summary: string; held_up: string[]; weak_points: string[] };
+  habits: BriefSection;
+  watch: string[];
+  limits: string[];
+};
+export type BriefingStrategy = {
+  strategy: string; label: string; kind: string; total_return_pct: number | null; max_drawdown_pct: number | null;
+  trades: number | null; held_back_return_pct?: number | null; trust?: string;
+};
+export type BriefingFacts = {
+  market: { symbol: string; name: string; asset_class: string };
+  price?: { price?: number; change_24h_pct?: number | null; data_source?: string; as_of?: string; error?: string };
+  chart?: { rsi14?: number | null; atr14_pct_of_price?: number; vs_sma50_pct?: number | null; vs_sma200_pct?: number | null;
+            position_in_60d_range_pct?: number | null; error?: string };
+  news?: { count: number; tagged: { bullish: number; bearish: number; neutral: number } } & { error?: string };
+  strategy_comparison?: { years: number; buy_and_hold_pct: number | null; strategies: BriefingStrategy[]; error?: string };
+  my_habits?: { trades: number; error?: string };
+};
+export type Briefing = {
+  id: number; symbol: string; status: "pending" | "done" | "error"; report: BriefingReport | null;
+  facts: BriefingFacts | null; note: string | null; created_at: string; label: string;
+};
+export type BriefingStatus = { configured: boolean; limit: number; used_today: number; remaining: number; label: string };
 export type AssistantAnswer = { id: number; question: string; status: "pending" | "done" | "error"; answer: string | null; tools_used: string[] };
 
 export type ScenarioInput = {
@@ -895,6 +923,10 @@ export const api = {
   ask: (question: string, history: Turn[], symbol?: string) =>
     call<{ id: number }>("/assistant/questions", { method: "POST", body: JSON.stringify({ question, history, symbol }) }),
   answer: (id: number) => call<AssistantAnswer>(`/assistant/questions/${id}`),
+  briefingStatus: () => call<BriefingStatus>("/briefing/status"),
+  startBriefing: (symbol: string, fresh = false) =>
+    call<{ id: number; status: string; reused?: boolean }>(`/briefing?symbol=${encodeURIComponent(symbol)}${fresh ? "&fresh=true" : ""}`, { method: "POST" }),
+  briefing: (id: number) => call<Briefing>(`/briefing/${id}`),
   importTrades: (file: File, contractSize: number) => {
     const f = new FormData();
     f.append("file", file);

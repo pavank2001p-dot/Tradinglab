@@ -152,6 +152,13 @@ api/   FastAPI + Postgres (Railway). Auth, price data, and later backtests, news
   every minute with the scheduler and whenever the page is open. Its live trades get the same diagnosis and
   are compared with a backtest of the same days. The AI coach is the assistant with two more tools
   (`my_agent`, `diagnose_strategy`), so it explains these results and answers "what if" questions from data.
+- **Claude market briefing** (`api/app/briefing.py`, `/briefing`): analysis of one market, never a signal. The site
+  gathers the facts in code (price, chart readings against the 20/50/200-day averages, RSI, ATR and recent ranges,
+  the last three days of tagged headlines, the week's high-impact releases, six strategies plus buy and hold re-tested
+  over five years with the last part held back, the user's latest saved backtest and their tagged paper-trading
+  habits) and Claude writes them up as a structured briefing (model `BRIEFING_MODEL`). The prompt forbids direction
+  calls, targets and buy or sell language, and any write-up that still reads like one is held back and only the facts
+  are shown. A briefing is reused for `BRIEFING_CACHE_MINUTES` (60); each user gets `BRIEFING_DAILY_LIMIT` (10) a day.
 - **AI assistant** (`api/app/assistant.py`): Claude with tools over the site's own data (prices, backtests,
   the trade log, risk profile, news, calendar), so numbers come from the database rather than the model.
   Answers run in the background and the page polls for them. Each user gets `ASSISTANT_DAILY_LIMIT`
