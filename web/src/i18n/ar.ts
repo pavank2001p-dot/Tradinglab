@@ -33,6 +33,8 @@ const ar: Record<string, string> = {
   "Find the limits that suit you": "اعثر على الحدود التي تناسبك",
   "Verified record": "السجل الموثّق",
   "Your sealed track record, Skill Passport and shareable proof": "سجلك المختوم وجواز المهارة ودليل يمكن مشاركته",
+  "Claude briefing": "موجز Claude",
+  "One market explained from its news, chart and tests. Analysis, not a signal": "شرح لسوق واحد من أخباره ورسمه البياني واختباراته. تحليل، وليس إشارة",
   "Assistant": "المساعد",
   "Ask anything in plain language": "اسأل أي شيء بلغة بسيطة",
   "Manual backtesting": "الاختبار التاريخي اليدوي",

@@ -33,6 +33,8 @@ const hi: Record<string, string> = {
   "Find the limits that suit you": "अपने लिए सही सीमाएँ खोजें",
   "Verified record": "सत्यापित रिकॉर्ड",
   "Your sealed track record, Skill Passport and shareable proof": "आपका सील किया गया ट्रैक रिकॉर्ड, स्किल पासपोर्ट और शेयर करने लायक सबूत",
+  "Claude briefing": "Claude ब्रीफ़िंग",
+  "One market explained from its news, chart and tests. Analysis, not a signal": "एक मार्केट को उसकी ख़बरों, चार्ट और टेस्ट से समझाया गया। विश्लेषण, सिग्नल नहीं",
   "Assistant": "सहायक",
   "Ask anything in plain language": "आसान भाषा में कुछ भी पूछें",
   "Manual backtesting": "मैनुअल बैकटेस्टिंग",

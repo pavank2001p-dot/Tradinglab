@@ -132,6 +132,20 @@ CREATE TABLE IF NOT EXISTS assistant_questions (
 );
 CREATE INDEX IF NOT EXISTS assistant_user_day_idx ON assistant_questions (user_id, created_at DESC);
 
+-- Claude market briefings: the facts gathered for one market and Claude's write-up of them (analysis only).
+CREATE TABLE IF NOT EXISTS briefings (
+    id          BIGSERIAL PRIMARY KEY,
+    user_id     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    symbol      TEXT NOT NULL,
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done', 'error')),
+    facts       JSONB,
+    report      JSONB,             -- NULL when Claude couldn't write it or it read like a signal
+    note        TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS briefings_user_idx ON briefings (user_id, created_at DESC);
+
 -- Paper trading: a practice account in virtual dollars, filled against real XAU/USD prices.
 CREATE TABLE IF NOT EXISTS paper_accounts (
     user_id          BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
