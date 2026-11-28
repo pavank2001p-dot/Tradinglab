@@ -239,9 +239,16 @@ account's leverage applies up to it), spread and overnight swap.
   at the ECB reference rate from `app/fx.py`. Paper trading, backtests, scenarios, replays, the trade log, risk
   checks and the order ticket all use it.
 - **Loaded on first use.** Only the core markets (`MARKETS_PRELOAD`, about 20 by default) are fetched on every
-  update. Any other market is fetched the first time someone opens it (the chart says so and fills in a minute or
-  two later), then kept up to date while it is in use: opened in the last `ACTIVE_DAYS` (14), or holding paper
-  positions, orders, an agent or alerts. This keeps the database to the markets people actually use.
+  update. Any other market is fetched the first time someone opens it, then kept up to date while it is in use:
+  opened in the last `ACTIVE_DAYS` (14), or holding paper positions, orders, an agent or alerts. This keeps the
+  database to the markets people actually use.
+- **Fresh first.** A first load fetches the last 30 days (`RECENT_DAYS` in `app/ingest.py`), so the chart is
+  current within seconds; the older history is filled in afterwards, a year at a time, by a separate background
+  task that never holds up the price updates. Opening a market whose prices are old (it had dropped out of the
+  updates) refreshes it at once. Each update refreshes `UPDATE_WORKERS` (6) markets at a time, starting from the
+  last hour the feed was read for that market, every `UPDATE_INTERVAL_MIN` minutes counted from the start of a run.
+  A download failure (network trouble, rate limits) is retried later; only a market with no recent prices in the
+  feed is marked as not carried.
 - **Probe.** On start the API checks once that the feed carries each catalog market (`python -m app.ingest probe`
   does the same by hand). A market it doesn't carry is left out of the list and checked again after a week.
 

@@ -13,7 +13,7 @@ def pool() -> ConnectionPool:
     global _pool
     if _pool is None:
         _pool = ConnectionPool(
-            config.DATABASE_URL, min_size=1, max_size=10, kwargs={"row_factory": dict_row}, open=True
+            config.DATABASE_URL, min_size=1, max_size=20, kwargs={"row_factory": dict_row}, open=True
         )
     return _pool
 

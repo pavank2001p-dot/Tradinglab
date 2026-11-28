@@ -27,6 +27,7 @@ import struct
 import threading
 import time
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
@@ -40,6 +41,14 @@ from .instruments import CORE, ENABLED, GOLD, Instrument, fit_point
 log = logging.getLogger("ingest")
 UTC = timezone.utc
 NY = ZoneInfo("America/New_York")
+
+
+class FeedError(RuntimeError):
+    """The feed couldn't be reached (network trouble, rate limits). Says nothing about whether it carries a market."""
+
+
+class NotCarried(RuntimeError):
+    """The feed has no recent prices for a market: it doesn't carry it (see duka_point)."""
 
 
 @dataclass
@@ -91,7 +100,7 @@ def duka_point(client: httpx.Client, inst: Instrument) -> float:
             db.set_meta(key, repr(point))
             log.info("%s: feed prices are divided by %g", inst.symbol, point)
             return point
-    raise RuntimeError(f"No recent {inst.symbol} prices to check the feed's scale against")
+    raise NotCarried(f"No recent {inst.symbol} prices to check the feed's scale against")
 
 
 def _ym(d: date) -> tuple[str, str]:
@@ -115,7 +124,7 @@ def _get(client: httpx.Client, url: str) -> bytes | None:
             continue
         r.raise_for_status()
         return lzma.decompress(r.content) if r.content else b""
-    raise RuntimeError(f"giving up on {url}")
+    raise FeedError(f"giving up on {url}")
 
 
 def parse_candles(raw: bytes, base: datetime, point: float = DUKA_POINT) -> list[Bar]:
@@ -195,14 +204,15 @@ def dukascopy_hourly(start: datetime, end: datetime, inst: Instrument = GOLD) ->
                 while day < nxt and day <= min(today, end.date()):
                     day_start = datetime(day.year, day.month, day.day, tzinfo=UTC)
                     y, m = _ym(day)
+                    raw = None
                     if day < today:
                         raw = _get(client, _duka_url(y, m, f"{day.day:02d}", "BID_candles_min_1.bi5", symbol=sym))
-                        bars = resample_hourly(parse_candles(raw, day_start, point)) if raw else []
-                    else:
+                    if raw is not None:
+                        bars = resample_hourly(parse_candles(raw, day_start, point))
+                    else:  # today, or a day whose minute file isn't published yet: completed hours from tick files
                         bars = []
-                        for hr in range(now.hour):  # completed hours only
-                            hour = day_start + timedelta(hours=hr)
-                            raw = _get(client, _duka_url(y, m, f"{day.day:02d}", f"{hr:02d}h_ticks.bi5", symbol=sym))
+                        for hour in _hours(max(start, day_start), min(end, day_start + timedelta(days=1))):
+                            raw = _get(client, _duka_url(y, m, f"{day.day:02d}", f"{hour.hour:02d}h_ticks.bi5", symbol=sym))
                             bar = parse_ticks_to_bar(raw, hour, point) if raw else None
                             if bar:
                                 bars.append(bar)
@@ -557,34 +567,96 @@ def _history_start(source: str, inst: Instrument) -> date:
     return config.HISTORY_SINCE if source == "dukascopy" else date(2010, 1, 1)
 
 
+RECENT_DAYS = 30  # a market's first load fetches this much first, so its chart is current within seconds
+
+
 def update(source: str, inst: Instrument = GOLD) -> int:
-    """Refresh one market from a day before its newest stored hour (or backfill it if empty)."""
+    """Bring one market's hourly, minute and second bars up to now.
+
+    A market with no prices yet (or prices from another source) gets the last RECENT_DAYS first; its older
+    history is filled in afterwards, a year at a time, by extend_all. Fetching from 2003 forward first left
+    a newly opened market showing years-old prices until its whole history had arrived. Demo data is
+    generated in full right away (it is offline and quick)."""
+    now = datetime.now(UTC)
+    done_key = _key(f"hourly_{source}_done", inst)
     last = _last_hour(inst)
     if last is None or db.get_meta(_key("price_source", inst)) != source:
-        n = backfill(source, _history_start(source, inst), inst)
-        if source == "dukascopy":
-            db.set_meta(_key("history_since", inst), _history_start(source, inst).isoformat())
+        if source != "dukascopy":
+            n = backfill(source, _history_start(source, inst), inst)
+        else:
+            n = load(source, now - timedelta(days=RECENT_DAYS), now, inst)
+            _load_fine_safely(source, inst)
+        db.set_meta(done_key, now.replace(minute=0, second=0, microsecond=0).isoformat())
+        _refreshed[inst.symbol] = time.time()
         return n
-    n = load(source, last - timedelta(days=1), datetime.now(UTC), inst)
+    # Re-fetch from the hour before the last one fetched (the feed can publish an hour late). Live quotes
+    # also write the newest bars, so how far the feed got is tracked apart from what is stored.
+    done = db.get_meta(done_key)
+    start = datetime.fromisoformat(done) - timedelta(hours=1) if done else last - timedelta(days=1)
+    start = min(start, last + timedelta(hours=1))
+    n = load(source, start, now, inst)
+    db.set_meta(done_key, now.replace(minute=0, second=0, microsecond=0).isoformat())
     _load_fine_safely(source, inst)
-    return n + extend_history(source, inst)
+    _refreshed[inst.symbol] = time.time()
+    return n
+
+
+def _to_update() -> list[Instrument]:
+    """The core markets and every market in use, core first (gold leads the catalog)."""
+    active = active_symbols()
+    core = [i for i in ENABLED if i.symbol in CORE]
+    rest = [i for i in ENABLED if i.symbol not in CORE and i.symbol in active]
+    return [i for i in core + rest if not is_unavailable(i)]
+
+
+def _update_one(source: str, inst: Instrument) -> int:
+    if not _claim(inst):  # being loaded or refreshed right now by someone opening it
+        return 0
+    try:
+        n = update(source, inst)
+        _ready.add(inst.symbol)
+        return n
+    except NotCarried as e:
+        log.warning("%s: %s", inst.symbol, e)
+        if not has_prices(inst):
+            mark_unavailable(inst)
+    except Exception:
+        log.exception("%s price update failed", inst.symbol)
+    finally:
+        _release(inst)
+    return 0
 
 
 def update_all(source: str) -> int:
-    """Refresh the core markets and every market in use, gold first. One market failing doesn't stop
-    the others."""
+    """Refresh the core markets and every market in use, UPDATE_WORKERS at a time, so one slow market
+    or a long list doesn't leave the others waiting. One market failing doesn't stop the others."""
+    todo = _to_update()
+    if config.UPDATE_WORKERS <= 1 or len(todo) <= 1:
+        return sum(_update_one(source, i) for i in todo)
+    with ThreadPoolExecutor(config.UPDATE_WORKERS, thread_name_prefix="update") as pool:
+        return sum(pool.map(lambda i: _update_one(source, i), todo))
+
+
+def extend_all(source: str, budget_seconds: float = 600) -> int:
+    """Fill in older history for markets that have only their recent prices so far (see update), one
+    market at a time and for at most `budget_seconds`, so it never holds up the price updates."""
+    if source != "dukascopy":
+        return 0
+    t0 = time.monotonic()
     total = 0
-    active = active_symbols()
-    for inst in ENABLED:
-        if inst.symbol not in CORE and inst.symbol not in active:
+    for inst in _to_update():
+        if time.monotonic() - t0 > budget_seconds:
+            break
+        if db.get_meta(_key("history_since", inst)) == _history_start(source, inst).isoformat():
             continue
-        if is_unavailable(inst):
+        if not has_prices(inst) or inst.symbol in _loading:
             continue
+        # Not claimed (see _claim): it fetches only years before the stored prices, so the market's
+        # regular refresh carries on meanwhile.
         try:
-            total += update(source, inst)
-            _ready.add(inst.symbol)
+            total += extend_history(source, inst)
         except Exception:
-            log.exception("%s price update failed", inst.symbol)
+            log.exception("%s history extension failed", inst.symbol)
     return total
 
 
@@ -597,7 +669,30 @@ UNAVAILABLE_RETRY_DAYS = 7
 _ready: set[str] = set()      # markets known to have stored prices
 _loading: set[str] = set()    # markets being loaded for the first time right now
 _touched: dict[str, float] = {}  # when each market's last use was saved (saved at most hourly)
+_refreshed: dict[str, float] = {}  # when this process last brought each market up to date
+_tried: dict[str, float] = {}      # when opening a market last started a fetch (retried at most once a minute)
+_busy: set[str] = set()       # markets being fetched right now (first load, refresh or history)
 _lock = threading.Lock()
+
+
+def _claim(inst: Instrument) -> bool:
+    """Mark a market as being fetched; False when something else is fetching it already."""
+    with _lock:
+        if inst.symbol in _busy:
+            return False
+        _busy.add(inst.symbol)
+        return True
+
+
+def _release(inst: Instrument) -> None:
+    with _lock:
+        _busy.discard(inst.symbol)
+
+
+def is_stale(inst: Instrument) -> bool:
+    """Not brought up to date by this process in the last two update intervals. Markets nobody has
+    opened for ACTIVE_DAYS drop out of the updates, so their stored prices can be weeks old."""
+    return time.time() - _refreshed.get(inst.symbol, 0) > 2 * config.UPDATE_INTERVAL_MIN * 60
 
 
 def active_symbols() -> set[str]:
@@ -657,30 +752,37 @@ def status(inst: Instrument) -> str:
 
 
 def ensure(inst: Instrument, background: bool | None = None) -> str:
-    """Someone opened this market: note it as in use and, if it has no prices yet, start loading them.
-    Returns its status. Loading runs in a background thread when the scheduler is on (the server) and is
-    left to the scheduler's next run otherwise; background=False loads right here (scripts, tests)."""
+    """Someone opened this market: note it as in use and make sure its prices are current. With no prices
+    yet it starts the first load ("loading"); with old prices (it had dropped out of the updates) it starts
+    a refresh and stays "ready" meanwhile. Fetching runs in a background thread when the scheduler is on
+    (the server) and is left to the scheduler's next run otherwise; background=False fetches right here
+    (scripts, tests)."""
     _touch(inst)
     st = status(inst)
-    if st != "on_demand":
+    if st == "unavailable" or st == "loading":
+        return st
+    if st == "ready" and (inst.symbol in CORE or not is_stale(inst)):
         return st
     if background is None:
         if not config.ENABLE_SCHEDULER:
             return st
         background = True
-    with _lock:
-        if inst.symbol in _loading:
-            return "loading"
-        _loading.add(inst.symbol)
+    if time.time() - _tried.get(inst.symbol, 0) < 60 or not _claim(inst):
+        return "loading" if inst.symbol in _loading else st
+    _tried[inst.symbol] = time.time()
+    if st == "on_demand":
+        with _lock:
+            _loading.add(inst.symbol)
     if background:
         threading.Thread(target=_first_load, args=(config.PRICE_SOURCE, inst), daemon=True,
                          name=f"load-{inst.symbol}").start()
-        return "loading"
+        return "loading" if st == "on_demand" else st
     _first_load(config.PRICE_SOURCE, inst)
     return status(inst)
 
 
 def _first_load(source: str, inst: Instrument) -> None:
+    """Load (or refresh) one market that someone opened. The caller has claimed it (_claim)."""
     try:
         update(source, inst)
         if has_prices(inst):
@@ -688,13 +790,15 @@ def _first_load(source: str, inst: Instrument) -> None:
                 c.execute("DELETE FROM meta WHERE key = %s", (f"unavailable:{inst.symbol}",))
         else:
             mark_unavailable(inst)
-    except RuntimeError as e:  # the feed has no recent prices for it (see duka_point)
+    except NotCarried as e:  # the feed has no recent prices for it (see duka_point)
         log.warning("%s: %s", inst.symbol, e)
-        mark_unavailable(inst)
-    except Exception:
-        log.exception("%s first load failed", inst.symbol)
+        if not has_prices(inst):
+            mark_unavailable(inst)
+    except Exception:  # network trouble is not a verdict: it is tried again next time
+        log.exception("%s load failed", inst.symbol)
     finally:
         _loading.discard(inst.symbol)
+        _release(inst)
 
 
 def mark_unavailable(inst: Instrument) -> None:
@@ -716,7 +820,7 @@ def probe(source: str = "dukascopy") -> dict[str, str]:
             try:
                 duka_point(client, inst)
                 out[inst.symbol] = "ok"
-            except RuntimeError:
+            except NotCarried:
                 mark_unavailable(inst)
                 out[inst.symbol] = "unavailable"
             except Exception as e:  # noqa: BLE001 - a network hiccup is not a verdict

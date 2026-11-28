@@ -124,7 +124,7 @@ def test_market_loads_on_first_use_and_list_shows_status(client, monkeypatch):
 def test_probe_hides_markets_the_feed_lacks(client, monkeypatch):
     def fake_point(_client, inst):
         if inst.symbol == "OJUICECMDUSX":
-            raise RuntimeError("No recent prices")
+            raise ingest.NotCarried("No recent prices")
         db.set_meta(ingest._key("duka_point", inst), "1000.0")
         return 1000.0
 

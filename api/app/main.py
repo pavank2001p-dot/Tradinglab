@@ -10,21 +10,35 @@ log = logging.getLogger("api")
 
 
 async def _price_updater():
-    probed = False
+    """Refresh the core markets and those in use every UPDATE_INTERVAL_MIN minutes (counted from the start
+    of each run, so a long run doesn't stretch the gap between updates)."""
+    loop = asyncio.get_running_loop()
     while True:
+        t0 = loop.time()
         try:
             n = await asyncio.to_thread(ingest.update_all, config.PRICE_SOURCE)
-            log.info("price update stored %d bars", n)
+            log.info("price update stored %d bars in %.0fs", n, loop.time() - t0)
         except Exception:
             log.exception("price update failed")
-        if not probed:
-            # Once per start, after the core markets are fresh: find catalog markets the feed doesn't carry.
-            probed = True
-            try:
-                await asyncio.to_thread(ingest.probe, config.PRICE_SOURCE)
-            except Exception:
-                log.exception("market probe failed")
-        await asyncio.sleep(config.UPDATE_INTERVAL_MIN * 60)
+        await asyncio.sleep(max(60.0, config.UPDATE_INTERVAL_MIN * 60 - (loop.time() - t0)))
+
+
+async def _history_filler():
+    """Slow work kept off the price updates: once per start, find catalog markets the feed doesn't carry;
+    then keep filling in the older history of markets that have only their recent prices so far."""
+    await asyncio.sleep(60)  # let the first price update go first
+    try:
+        await asyncio.to_thread(ingest.probe, config.PRICE_SOURCE)
+    except Exception:
+        log.exception("market probe failed")
+    while True:
+        try:
+            n = await asyncio.to_thread(ingest.extend_all, config.PRICE_SOURCE)
+            if n:
+                log.info("history filler stored %d older hourly bars", n)
+        except Exception:
+            log.exception("history filler failed")
+        await asyncio.sleep(120)
 
 
 async def _news_updater():
@@ -54,7 +68,8 @@ async def lifespan(app: FastAPI):
     db.migrate()
     ingest.load_monthly_history()
     calendar.seed_fomc()
-    tasks = ([asyncio.create_task(_price_updater()), asyncio.create_task(_news_updater()),
+    tasks = ([asyncio.create_task(_price_updater()), asyncio.create_task(_history_filler()),
+              asyncio.create_task(_news_updater()),
               asyncio.create_task(_agent_runner())] if config.ENABLE_SCHEDULER else [])
     if config.ENABLE_SCHEDULER and config.LIVE_PRICES and config.FINNHUB_API_KEY and config.PRICE_SOURCE != "sample":
         tasks.append(asyncio.create_task(live.run()))
