@@ -615,26 +615,37 @@ def _update_one(source: str, inst: Instrument) -> int:
     try:
         n = update(source, inst)
         _ready.add(inst.symbol)
+        _errors.pop(inst.symbol, None)
         return n
     except NotCarried as e:
         log.warning("%s: %s", inst.symbol, e)
+        _note_error(inst, e)
         if not has_prices(inst):
             mark_unavailable(inst)
-    except Exception:
+    except Exception as e:
         log.exception("%s price update failed", inst.symbol)
+        _note_error(inst, e)
     finally:
         _release(inst)
     return 0
 
 
+def _note_error(inst: Instrument, e: Exception) -> None:
+    _errors[inst.symbol] = (datetime.now(UTC).isoformat(timespec="seconds"), f"{type(e).__name__}: {e}"[:300])
+
+
 def update_all(source: str) -> int:
     """Refresh the core markets and every market in use, UPDATE_WORKERS at a time, so one slow market
     or a long list doesn't leave the others waiting. One market failing doesn't stop the others."""
-    todo = _to_update()
+    t0, todo = time.time(), _to_update()
     if config.UPDATE_WORKERS <= 1 or len(todo) <= 1:
-        return sum(_update_one(source, i) for i in todo)
-    with ThreadPoolExecutor(config.UPDATE_WORKERS, thread_name_prefix="update") as pool:
-        return sum(pool.map(lambda i: _update_one(source, i), todo))
+        n = sum(_update_one(source, i) for i in todo)
+    else:
+        with ThreadPoolExecutor(config.UPDATE_WORKERS, thread_name_prefix="update") as pool:
+            n = sum(pool.map(lambda i: _update_one(source, i), todo))
+    _last_run.update(started=datetime.fromtimestamp(t0, UTC).isoformat(timespec="seconds"),
+                     seconds=round(time.time() - t0, 1), markets=len(todo), bars=n)
+    return n
 
 
 def extend_all(source: str, budget_seconds: float = 600) -> int:
@@ -671,6 +682,8 @@ _loading: set[str] = set()    # markets being loaded for the first time right no
 _touched: dict[str, float] = {}  # when each market's last use was saved (saved at most hourly)
 _refreshed: dict[str, float] = {}  # when this process last brought each market up to date
 _tried: dict[str, float] = {}      # when opening a market last started a fetch (retried at most once a minute)
+_errors: dict[str, tuple[str, str]] = {}  # each market's last fetch error: (when, what), for /prices/health
+_last_run: dict[str, object] = {}  # the last update_all run: start, seconds, markets, bars
 _busy: set[str] = set()       # markets being fetched right now (first load, refresh or history)
 _lock = threading.Lock()
 
@@ -792,13 +805,29 @@ def _first_load(source: str, inst: Instrument) -> None:
             mark_unavailable(inst)
     except NotCarried as e:  # the feed has no recent prices for it (see duka_point)
         log.warning("%s: %s", inst.symbol, e)
+        _note_error(inst, e)
         if not has_prices(inst):
             mark_unavailable(inst)
-    except Exception:  # network trouble is not a verdict: it is tried again next time
+    except Exception as e:  # network trouble is not a verdict: it is tried again next time
         log.exception("%s load failed", inst.symbol)
+        _note_error(inst, e)
     finally:
         _loading.discard(inst.symbol)
         _release(inst)
+
+
+def clear_old_unavailable_marks() -> int:
+    """Once: forget "not carried" marks made before network errors were told apart from missing markets.
+    Back then a rate limit or a dropped connection hid a market for a week. Markets the feed really lacks
+    are found again by the next probe."""
+    if db.get_meta("unavailable_reset") == "v1":
+        return 0
+    with db.conn() as c:
+        n = c.execute("DELETE FROM meta WHERE key LIKE 'unavailable:%%'").rowcount
+    db.set_meta("unavailable_reset", "v1")
+    if n:
+        log.info("cleared %d old unavailable marks", n)
+    return n
 
 
 def mark_unavailable(inst: Instrument) -> None:

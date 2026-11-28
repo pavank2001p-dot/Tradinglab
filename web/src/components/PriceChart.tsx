@@ -101,6 +101,13 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
     const id = setTimeout(() => setRetry((r) => r + 1), 15_000);
     return () => clearTimeout(id);
   }, [empty, retry]);
+  // What the server says about a market with no prices yet, so the message matches what is really happening.
+  const [feedStatus, setFeedStatus] = useState<"ready" | "loading" | "on_demand" | "unavailable" | null>(null);
+  useEffect(() => setFeedStatus(null), [symbol]);
+  useEffect(() => {
+    if (!empty) return;
+    api.openMarket(symbol).then((r) => r.symbol === symbol && setFeedStatus(r.status), () => {});
+  }, [empty, retry, symbol]);
   const [full, setFull] = useState(false);
   const [quote, setQuote] = useState<LiveQuote | null>(null);
   const [all, setAll] = useState(false); // whole history on monthly candles
@@ -546,8 +553,12 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
       {error && <p className="px-3 py-2 text-sm text-down">Couldn&apos;t load prices: {error}</p>}
       {empty && !error && (
         <p className="px-3 py-2 text-sm text-muted">
-          {!market?.core && !isSeconds(tf)
-            ? `Fetching ${market?.name ?? "this market"}'s price history for the first time. It usually takes a minute or two, and the chart fills in by itself.`
+          {feedStatus === "unavailable" && !isSeconds(tf)
+            ? `The free price feed has no recent ${market?.name ?? "prices for this market"} prices right now. It is checked again automatically.`
+            : !isSeconds(tf) && (feedStatus === "loading" || (!market?.core && feedStatus !== "on_demand"))
+            ? `Fetching ${market?.name ?? "this market"}'s latest prices. It usually takes under a minute, and the chart fills in by itself.`
+            : feedStatus === "on_demand" && !isSeconds(tf)
+            ? `${market?.name ?? "This market"}'s prices load with the server's next price update; the chart fills in by itself.`
             : isSeconds(tf) || SIZE[tf]! < 3600
             ? "No bars here yet. Second and minute history fills in after the server's next price update."
             : "No prices loaded yet."}
