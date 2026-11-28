@@ -155,6 +155,7 @@ def test_feed_push_back_pauses_and_retries(monkeypatch):
     with pytest.raises(ingest.FeedError, match="HTTP 429"):
         ingest._get(c, "https://datafeed.dukascopy.com/y")
     assert ingest._feed_pause > time.monotonic()  # every download waits out the push-back
+    assert ingest._feed_last["why"].startswith("HTTP 429") and ingest._feed_last["url"].endswith("/y")
     monkeypatch.setattr(ingest, "_feed_pause", 0.0)
     monkeypatch.setattr(ingest, "_feed_strikes", 0)
     assert ingest._get(FakeClient([404]), "https://datafeed.dukascopy.com/z") is None

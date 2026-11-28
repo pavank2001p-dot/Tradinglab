@@ -81,7 +81,8 @@ def health():
             "interval_min": config.UPDATE_INTERVAL_MIN, "workers": config.UPDATE_WORKERS,
             "last_run": ingest._last_run or None,
             "feed_paused_seconds": max(0, round(ingest._feed_pause - __import__("time").monotonic())),
-            "feed_pushbacks_in_a_row": ingest._feed_strikes, "core": sorted(ins.CORE),
+            "feed_pushbacks_in_a_row": ingest._feed_strikes,
+            "feed_last_pushback": ingest._feed_last or None, "feed_last_success": ingest._feed_last_ok or None, "core": sorted(ins.CORE),
             "loading": sorted(ingest._loading), "unavailable": sorted(ingest.unavailable_symbols()),
             "errors": {k: {"at": a, "error": e} for k, (a, e) in sorted(ingest._errors.items())},
             "hours_since_newest_bar": dict(sorted(newest.items()))}

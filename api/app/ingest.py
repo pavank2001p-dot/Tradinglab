@@ -117,6 +117,8 @@ _feed_lock = threading.Lock()
 _feed_next = 0.0     # monotonic time the next request may start
 _feed_pause = 0.0    # monotonic time the feed's push-back ends
 _feed_strikes = 0    # push-backs in a row, for the growing pause
+_feed_last: dict[str, str] = {}  # the latest push-back: when, why and for which file (for /prices/health)
+_feed_last_ok = ""   # when the feed last served a file
 ATTEMPTS = 6
 
 
@@ -130,11 +132,13 @@ def _wait_turn() -> None:
         time.sleep(delay)
 
 
-def _push_back(retry_after: str | None) -> float:
+def _push_back(retry_after: str | None, why: str = "", url: str = "", body: str = "") -> float:
     """The feed pushed back: pause every download, longer each time in a row (up to 2 minutes)."""
     global _feed_pause, _feed_strikes
     with _feed_lock:
         _feed_strikes += 1
+        _feed_last.update(at=datetime.now(UTC).isoformat(timespec="seconds"), why=why, url=url,
+                          body=" ".join(body.split())[:200])
         pause = min(120.0, 2.0 * 2 ** (_feed_strikes - 1)) * random.uniform(0.8, 1.2)
         if retry_after and retry_after.strip().isdigit():
             pause = max(pause, min(600.0, float(retry_after)))
@@ -143,8 +147,9 @@ def _push_back(retry_after: str | None) -> float:
 
 
 def _feed_ok() -> None:
-    global _feed_strikes
+    global _feed_strikes, _feed_last_ok
     _feed_strikes = 0
+    _feed_last_ok = datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _get(client: httpx.Client, url: str) -> bytes | None:
@@ -157,14 +162,16 @@ def _get(client: httpx.Client, url: str) -> bytes | None:
                 r = client.get(url)
         except httpx.HTTPError as e:
             why = type(e).__name__
-            log.warning("fetch %s failed (%s), pausing %.0fs", url, why, _push_back(None))
+            log.warning("fetch %s failed (%s), pausing %.0fs", url, why, _push_back(None, f"{why}: {e}", url))
             continue
         if r.status_code == 404:
             _feed_ok()
             return None
         if r.status_code >= 500 or r.status_code in (403, 429):
             why = f"HTTP {r.status_code}"
-            log.warning("fetch %s: %s, pausing %.0fs", url, why, _push_back(r.headers.get("Retry-After")))
+            body = r.text if "text" in r.headers.get("content-type", "") else ""
+            log.warning("fetch %s: %s, pausing %.0fs", url, why,
+                        _push_back(r.headers.get("Retry-After"), f"{why} from {r.headers.get('server', '?')}", url, body))
             continue
         r.raise_for_status()
         _feed_ok()
@@ -172,7 +179,8 @@ def _get(client: httpx.Client, url: str) -> bytes | None:
             return lzma.decompress(r.content) if r.content else b""
         except lzma.LZMAError:
             why = "not a price file"  # a throttling page served with 200
-            log.warning("fetch %s: %s, pausing %.0fs", url, why, _push_back(None))
+            log.warning("fetch %s: %s, pausing %.0fs", url, why,
+                        _push_back(None, why, url, r.text[:200] if "text" in r.headers.get("content-type", "") else ""))
     raise FeedError(f"giving up on {url} ({why})")
 
 
