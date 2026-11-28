@@ -97,10 +97,10 @@ export default function PriceChart({ height = 520, initialTf = "1h", tools = fal
   const [retry, setRetry] = useState(0);
   useEffect(() => setRetry(0), [symbol]);
   useEffect(() => {
-    if (!empty || market?.core || retry >= 40) return;
+    if (!empty || retry >= 40) return;
     const id = setTimeout(() => setRetry((r) => r + 1), 15_000);
     return () => clearTimeout(id);
-  }, [empty, retry, market?.core]);
+  }, [empty, retry]);
   const [full, setFull] = useState(false);
   const [quote, setQuote] = useState<LiveQuote | null>(null);
   const [all, setAll] = useState(false); // whole history on monthly candles

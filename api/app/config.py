@@ -16,6 +16,8 @@ PRICE_SOURCE = os.getenv("PRICE_SOURCE", "dukascopy")
 # Run the price updater inside the API process (one Railway service, no separate cron).
 ENABLE_SCHEDULER = _bool("ENABLE_SCHEDULER", False)
 UPDATE_INTERVAL_MIN = int(os.getenv("UPDATE_INTERVAL_MIN", "15"))
+# How many markets the updater refreshes at once (each is a handful of small downloads).
+UPDATE_WORKERS = max(1, int(os.getenv("UPDATE_WORKERS", "6")))
 # A market outside the core list stays up to date for this many days after someone last opened it.
 ACTIVE_DAYS = int(os.getenv("ACTIVE_DAYS", "14"))
 SYMBOL = "XAUUSD"
