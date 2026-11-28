@@ -34,7 +34,7 @@ _cache: dict = {"at": 0.0, "rates": None, "as_of": None}
 def fetch() -> tuple[dict[str, float], str | None]:
     wanted = [c for c in CURRENCIES + CONVERT if c not in PEGGED]
     r = httpx.get(config.FX_URL, params={"base": "USD", "symbols": ",".join(wanted)}, timeout=15,
-                  headers={"User-Agent": "goldlab/1.0"})
+                  headers={"User-Agent": "tradinglab/1.0"})
     r.raise_for_status()
     body = r.json()
     rates = {k: float(v) for k, v in (body.get("rates") or {}).items() if k in wanted and float(v) > 0}

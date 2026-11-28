@@ -245,7 +245,7 @@ account's leverage applies up to it), spread and overnight swap.
 - **Fresh first.** A first load fetches the last 30 days (`RECENT_DAYS` in `app/ingest.py`), so the chart is
   current within seconds; the older history is filled in afterwards, a year at a time, by a separate background
   task that never holds up the price updates. Opening a market whose prices are old (it had dropped out of the
-  updates) refreshes it at once. Each update refreshes `UPDATE_WORKERS` (6) markets at a time, starting from the
+  updates) refreshes it at once. Each update refreshes `UPDATE_WORKERS` (3) markets at a time, with at most `FEED_CONCURRENCY` (2) downloads in flight, `FEED_MIN_GAP` (0.25 s) apart, and a shared pause when the feed throttles, starting from the
   last hour the feed was read for that market, every `UPDATE_INTERVAL_MIN` minutes counted from the start of a run.
   A download failure (network trouble, rate limits) is retried later; only a market with no recent prices in the
   feed is marked as not carried.

@@ -130,3 +130,31 @@ def test_health_shows_fetch_errors(client, monkeypatch):
     ingest.update_all("dukascopy")
     h = client.get("/prices/health").json()
     assert "FeedError" in h["errors"]["XAUUSD"]["error"] and h["last_run"]["markets"] == len(instruments.CORE)
+
+
+class FakeClient:
+    def __init__(self, codes):
+        self.codes, self.calls = list(codes), 0
+
+    def get(self, url):
+        import httpx
+        self.calls += 1
+        code = self.codes.pop(0)
+        return httpx.Response(code, headers={"Retry-After": "0"}, content=b"", request=httpx.Request("GET", url))
+
+
+def test_feed_push_back_pauses_and_retries(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(ingest.time, "sleep", lambda s: sleeps.append(s))
+    monkeypatch.setattr(ingest, "_feed_pause", 0.0)
+    monkeypatch.setattr(ingest, "_feed_strikes", 0)
+    c = FakeClient([429, 503, 200])
+    assert ingest._get(c, "https://datafeed.dukascopy.com/x") == b"" and c.calls == 3
+    assert ingest._feed_strikes == 0  # a success resets the pause
+    c = FakeClient([429] * ingest.ATTEMPTS)
+    with pytest.raises(ingest.FeedError, match="HTTP 429"):
+        ingest._get(c, "https://datafeed.dukascopy.com/y")
+    assert ingest._feed_pause > time.monotonic()  # every download waits out the push-back
+    monkeypatch.setattr(ingest, "_feed_pause", 0.0)
+    monkeypatch.setattr(ingest, "_feed_strikes", 0)
+    assert ingest._get(FakeClient([404]), "https://datafeed.dukascopy.com/z") is None

@@ -69,7 +69,7 @@ def fetch_feed() -> int:
     """Pull this week's high- and medium-impact events for the big economies from the public calendar feed."""
     if not config.CALENDAR_FEED_URL:
         return 0
-    r = httpx.get(config.CALENDAR_FEED_URL, timeout=20, headers={"User-Agent": "goldlab/1.0"})
+    r = httpx.get(config.CALENDAR_FEED_URL, timeout=20, headers={"User-Agent": "tradinglab/1.0"})
     r.raise_for_status()
     rows = []
     for e in r.json():

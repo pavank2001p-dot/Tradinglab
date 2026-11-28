@@ -79,7 +79,9 @@ def health():
     newest = {r["symbol"]: round((now - r["ts"]).total_seconds() / 3600, 1) for r in rows}
     return {"scheduler": config.ENABLE_SCHEDULER, "source": config.PRICE_SOURCE,
             "interval_min": config.UPDATE_INTERVAL_MIN, "workers": config.UPDATE_WORKERS,
-            "last_run": ingest._last_run or None, "core": sorted(ins.CORE),
+            "last_run": ingest._last_run or None,
+            "feed_paused_seconds": max(0, round(ingest._feed_pause - __import__("time").monotonic())),
+            "feed_pushbacks_in_a_row": ingest._feed_strikes, "core": sorted(ins.CORE),
             "loading": sorted(ingest._loading), "unavailable": sorted(ingest.unavailable_symbols()),
             "errors": {k: {"at": a, "error": e} for k, (a, e) in sorted(ingest._errors.items())},
             "hours_since_newest_bar": dict(sorted(newest.items()))}
