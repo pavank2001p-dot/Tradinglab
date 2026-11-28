@@ -259,6 +259,14 @@ account's leverage applies up to it), spread and overnight swap.
   hole. The market list shows each market's first daily and minute price (`history_from`, `minutes_from`); the
   strategy finder greys out periods longer than that, and a backtest that asks for earlier dates says where its
   prices start.
+- **Backup source.** When Dukascopy refuses downloads (it has been answering this server with 503 since about
+  the end of October) or doesn't carry a market, prices come from Yahoo Finance's public chart data instead
+  (`app/yahoo.py`, no key): hourly bars for the last two years, daily bars before that and minute bars for the
+  last week. Commodities and indices come from futures or the cash index, so their level can differ slightly
+  from Dukascopy's CFDs, and cents are converted to dollars. While Dukascopy refuses everything, markets go
+  straight to the backup and Dukascopy is tried again every 10 minutes; its bars replace the backup's once it
+  answers. Yahoo's endpoint is unofficial and its terms restrict commercial use: set `BACKUP_SOURCE=` (empty)
+  to turn it off. Gas oil, sugar and the China A50 have no close match there.
 - Live quotes come from Finnhub's free websocket with the same `FINNHUB_API_KEY`: OANDA prices for
   metals, energy, forex and indices, US stock trades, and Binance for crypto. The free plan streams 50 symbols,
   so the core markets come first, then those in use (`LIVE_MAX`). A first quote far from the stored price is

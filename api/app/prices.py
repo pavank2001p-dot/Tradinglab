@@ -77,7 +77,7 @@ def health():
         rows = c.execute("""SELECT symbol, max(ts) AS ts FROM candles WHERE tf = '1h' GROUP BY symbol""").fetchall()
     now = datetime.now(timezone.utc)
     newest = {r["symbol"]: round((now - r["ts"]).total_seconds() / 3600, 1) for r in rows}
-    return {"scheduler": config.ENABLE_SCHEDULER, "source": config.PRICE_SOURCE,
+    return {"scheduler": config.ENABLE_SCHEDULER, "source": config.PRICE_SOURCE, "backup": config.BACKUP_SOURCE or None,
             "interval_min": config.UPDATE_INTERVAL_MIN, "workers": config.UPDATE_WORKERS,
             "last_run": ingest._last_run or None,
             "feed_paused_seconds": max(0, round(ingest._feed_pause - __import__("time").monotonic())),
