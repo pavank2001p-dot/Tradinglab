@@ -108,23 +108,72 @@ def _ym(d: date) -> tuple[str, str]:
     return f"{d.year}", f"{d.month - 1:02d}"
 
 
+# The feed throttles clients that ask too fast: it answers 429 or 5xx, or drops the connection. Every
+# download in the process goes through one gate: at most FEED_CONCURRENCY at once, FEED_MIN_GAP seconds
+# apart, and when the feed pushes back, everyone pauses (honouring Retry-After) instead of each thread
+# hammering it with its own quick retries.
+_feed_gate = threading.BoundedSemaphore(max(1, config.FEED_CONCURRENCY))
+_feed_lock = threading.Lock()
+_feed_next = 0.0     # monotonic time the next request may start
+_feed_pause = 0.0    # monotonic time the feed's push-back ends
+_feed_strikes = 0    # push-backs in a row, for the growing pause
+ATTEMPTS = 6
+
+
+def _wait_turn() -> None:
+    global _feed_next
+    with _feed_lock:
+        start = max(time.monotonic(), _feed_next, _feed_pause)
+        _feed_next = start + config.FEED_MIN_GAP
+    delay = start - time.monotonic()
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _push_back(retry_after: str | None) -> float:
+    """The feed pushed back: pause every download, longer each time in a row (up to 2 minutes)."""
+    global _feed_pause, _feed_strikes
+    with _feed_lock:
+        _feed_strikes += 1
+        pause = min(120.0, 2.0 * 2 ** (_feed_strikes - 1)) * random.uniform(0.8, 1.2)
+        if retry_after and retry_after.strip().isdigit():
+            pause = max(pause, min(600.0, float(retry_after)))
+        _feed_pause = max(_feed_pause, time.monotonic() + pause)
+        return pause
+
+
+def _feed_ok() -> None:
+    global _feed_strikes
+    _feed_strikes = 0
+
+
 def _get(client: httpx.Client, url: str) -> bytes | None:
     """Fetch and decompress one .bi5 file. None when the file does not exist yet."""
-    for attempt in range(4):
+    why = ""
+    for _ in range(ATTEMPTS):
+        _wait_turn()
         try:
-            r = client.get(url)
+            with _feed_gate:
+                r = client.get(url)
         except httpx.HTTPError as e:
-            log.warning("fetch %s failed (%s), retrying", url, e)
-            time.sleep(2**attempt)
+            why = type(e).__name__
+            log.warning("fetch %s failed (%s), pausing %.0fs", url, why, _push_back(None))
             continue
         if r.status_code == 404:
+            _feed_ok()
             return None
-        if r.status_code >= 500 or r.status_code == 429:
-            time.sleep(2**attempt)
+        if r.status_code >= 500 or r.status_code in (403, 429):
+            why = f"HTTP {r.status_code}"
+            log.warning("fetch %s: %s, pausing %.0fs", url, why, _push_back(r.headers.get("Retry-After")))
             continue
         r.raise_for_status()
-        return lzma.decompress(r.content) if r.content else b""
-    raise FeedError(f"giving up on {url}")
+        _feed_ok()
+        try:
+            return lzma.decompress(r.content) if r.content else b""
+        except lzma.LZMAError:
+            why = "not a price file"  # a throttling page served with 200
+            log.warning("fetch %s: %s, pausing %.0fs", url, why, _push_back(None))
+    raise FeedError(f"giving up on {url} ({why})")
 
 
 def parse_candles(raw: bytes, base: datetime, point: float = DUKA_POINT) -> list[Bar]:
@@ -185,7 +234,7 @@ def dukascopy_hourly(start: datetime, end: datetime, inst: Instrument = GOLD) ->
     """
     now = datetime.now(UTC)
     today = now.date()
-    headers = {"User-Agent": "goldlab-ingest/1.0"}
+    headers = {"User-Agent": "tradinglab-ingest/1.0"}
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
         point, sym = duka_point(client, inst), inst.symbol
         month = date(start.year, start.month, 1)
@@ -234,7 +283,7 @@ def _hours(start: datetime, end: datetime) -> Iterator[datetime]:
 def dukascopy_minutes(start: datetime, end: datetime, inst: Instrument = GOLD) -> Iterator[list[Bar]]:
     """Minute bars in [start, end): a daily minute file for past days, hourly tick files for today."""
     today = datetime.now(UTC).date()
-    headers = {"User-Agent": "goldlab-ingest/1.0"}
+    headers = {"User-Agent": "tradinglab-ingest/1.0"}
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
         point, sym = duka_point(client, inst), inst.symbol
         day = start.date()
@@ -257,7 +306,7 @@ def dukascopy_minutes(start: datetime, end: datetime, inst: Instrument = GOLD) -
 
 def dukascopy_seconds(start: datetime, end: datetime, inst: Instrument = GOLD) -> Iterator[list[Bar]]:
     """One-second bars from hourly tick files. The feed publishes each hour once it has ended."""
-    headers = {"User-Agent": "goldlab-ingest/1.0"}
+    headers = {"User-Agent": "tradinglab-ingest/1.0"}
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
         point = duka_point(client, inst)
         for hour in _hours(start, end):
@@ -841,7 +890,7 @@ def probe(source: str = "dukascopy") -> dict[str, str]:
     out: dict[str, str] = {}
     if source != "dukascopy":
         return out
-    headers = {"User-Agent": "goldlab-ingest/1.0"}
+    headers = {"User-Agent": "tradinglab-ingest/1.0"}
     with httpx.Client(timeout=30, headers=headers, follow_redirects=True) as client:
         for inst in ENABLED:
             if inst.symbol == GOLD.symbol or db.get_meta(_key("duka_point", inst)) or is_unavailable(inst):

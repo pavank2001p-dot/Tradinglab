@@ -17,7 +17,11 @@ PRICE_SOURCE = os.getenv("PRICE_SOURCE", "dukascopy")
 ENABLE_SCHEDULER = _bool("ENABLE_SCHEDULER", False)
 UPDATE_INTERVAL_MIN = int(os.getenv("UPDATE_INTERVAL_MIN", "15"))
 # How many markets the updater refreshes at once (each is a handful of small downloads).
-UPDATE_WORKERS = max(1, int(os.getenv("UPDATE_WORKERS", "6")))
+UPDATE_WORKERS = max(1, int(os.getenv("UPDATE_WORKERS", "3")))
+# Downloads from the price feed: at most this many at once, and this many seconds apart. The free feed
+# throttles clients that ask faster (see app.ingest._get).
+FEED_CONCURRENCY = int(os.getenv("FEED_CONCURRENCY", "2"))
+FEED_MIN_GAP = float(os.getenv("FEED_MIN_GAP", "0.25"))
 # A market outside the core list stays up to date for this many days after someone last opened it.
 ACTIVE_DAYS = int(os.getenv("ACTIVE_DAYS", "14"))
 SYMBOL = "XAUUSD"
