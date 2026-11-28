@@ -159,3 +159,69 @@ def test_feed_push_back_pauses_and_retries(monkeypatch):
     monkeypatch.setattr(ingest, "_feed_pause", 0.0)
     monkeypatch.setattr(ingest, "_feed_strikes", 0)
     assert ingest._get(FakeClient([404]), "https://datafeed.dukascopy.com/z") is None
+
+
+def yahoo_answer(start, n, step, price, gmtoffset=0):
+    ts = [int((start + timedelta(seconds=step * i)).timestamp()) for i in range(n)]
+    closes = [price + i * 0.01 * price / 100 for i in range(n)]
+    return {"meta": {"gmtoffset": gmtoffset}, "timestamp": ts,
+            "indicators": {"quote": [{"open": closes, "high": [c * 1.001 for c in closes],
+                                      "low": [c * 0.999 for c in closes], "close": closes, "volume": [1] * n}]}}
+
+
+def test_yahoo_symbols_cover_the_catalog():
+    from app import yahoo
+    assert yahoo.symbol(instruments.get("PGUSUSD")) == "PG"
+    assert yahoo.symbol(instruments.get("EURUSD")) == "EURUSD=X"
+    assert yahoo.symbol(instruments.get("COPPERCMDUSD")) == "HG=F"
+    assert yahoo.symbol(instruments.get("USA500IDXUSD")) == "^GSPC"
+    assert yahoo.symbol(instruments.get("LNKUSD")) == "LINK-USD"
+    assert yahoo.symbol(instruments.get("DIESELCMDUSD")) is None
+    missing = [i.symbol for i in instruments.ALL if yahoo.symbol(i) is None]
+    assert len(missing) <= 3, missing
+    assert yahoo.scale_for(550, 5.5) == 0.01 and yahoo.scale_for(165, 165) == 1.0
+
+
+def test_backup_source_fills_a_market_the_main_feed_refuses(client, monkeypatch):
+    from app import yahoo
+    wheat = instruments.get("WHEATCMDUSX")
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    calls = []
+
+    def fake_get(sym, params):
+        calls.append((sym, params["interval"]))
+        start = datetime.fromtimestamp(params["period1"], UTC)
+        if params["interval"] == "60m":
+            return yahoo_answer(now - timedelta(hours=48), 48, 3600, 550.0)  # cents a bushel
+        if params["interval"] == "1d":
+            return yahoo_answer(start, 5, 86400, 540.0)
+        return yahoo_answer(now - timedelta(minutes=30), 30, 60, 551.0)
+
+    def refused(source, inst):
+        raise ingest.FeedError("giving up on https://datafeed.dukascopy.com/x (HTTP 503)")
+
+    monkeypatch.setattr(ingest.config, "BACKUP_SOURCE", "yahoo")
+    monkeypatch.setattr(yahoo, "_get", fake_get)
+    monkeypatch.setattr(ingest, "update", refused)
+    monkeypatch.setattr(ingest, "_feed_strikes", 0)
+    assert ingest.ensure(wheat, background=False) == "ready"
+    assert ("ZW=F", "60m") in calls
+    with db.conn() as c:
+        last = c.execute("SELECT close FROM candles WHERE symbol = %s AND tf = '1h' ORDER BY ts DESC LIMIT 1",
+                         (wheat.symbol,)).fetchone()["close"]
+        daily = c.execute("SELECT count(*) AS n FROM candles WHERE symbol = %s AND tf = '1d'", (wheat.symbol,)).fetchone()["n"]
+    assert 5 < last < 6  # cents turned into dollars, the market's own scale
+    assert daily >= 2 and not ingest.is_unavailable(wheat)
+    # While the main feed refuses everything, markets go straight to the backup.
+    monkeypatch.setattr(ingest, "_feed_strikes", 5)
+    monkeypatch.setattr(ingest, "update", lambda s, i: pytest.fail("main feed tried while it is down"))
+    calls.clear()
+    ingest.fetch_market("dukascopy", wheat)
+    assert calls and calls[0][0] == "ZW=F"
+
+
+def test_backup_off_keeps_the_main_feeds_error(client, monkeypatch):
+    monkeypatch.setattr(ingest.config, "BACKUP_SOURCE", "")
+    monkeypatch.setattr(ingest, "update", lambda s, i: (_ for _ in ()).throw(ingest.FeedError("down")))
+    with pytest.raises(ingest.FeedError):
+        ingest.fetch_market("dukascopy", XLE)

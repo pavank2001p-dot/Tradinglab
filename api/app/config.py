@@ -22,6 +22,8 @@ UPDATE_WORKERS = max(1, int(os.getenv("UPDATE_WORKERS", "3")))
 # throttles clients that ask faster (see app.ingest._get).
 FEED_CONCURRENCY = int(os.getenv("FEED_CONCURRENCY", "2"))
 FEED_MIN_GAP = float(os.getenv("FEED_MIN_GAP", "0.25"))
+# Backup price source when the main feed refuses a download or lacks a market: "yahoo" or "" for none.
+BACKUP_SOURCE = os.getenv("BACKUP_SOURCE", "yahoo").strip().lower()
 # A market outside the core list stays up to date for this many days after someone last opened it.
 ACTIVE_DAYS = int(os.getenv("ACTIVE_DAYS", "14"))
 SYMBOL = "XAUUSD"

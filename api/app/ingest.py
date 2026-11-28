@@ -666,11 +666,45 @@ def _to_update() -> list[Instrument]:
     return [i for i in core + rest if not is_unavailable(i)]
 
 
+FEED_DOWN_RETRY = 600  # while the main feed refuses everything, try it for a market at most every 10 minutes
+_main_tried: dict[str, float] = {}
+
+
+def _feed_down() -> bool:
+    return _feed_strikes >= 3
+
+
+def fetch_market(source: str, inst: Instrument) -> int:
+    """Bring one market up to date: from the main feed, or from the backup source (app.yahoo) when the main
+    feed refuses downloads or doesn't carry the market. While the main feed is refusing everything, each
+    market goes straight to the backup and tries the main feed again every FEED_DOWN_RETRY seconds."""
+    from . import yahoo
+    backup = source == "dukascopy" and yahoo.enabled() and yahoo.symbol(inst) is not None
+    if backup and _feed_down() and time.time() - _main_tried.get(inst.symbol, 0) < FEED_DOWN_RETRY:
+        n = yahoo.update(inst)
+        _refreshed[inst.symbol] = time.time()
+        return n
+    _main_tried[inst.symbol] = time.time()
+    try:
+        return update(source, inst)
+    except (FeedError, NotCarried) as e:
+        if not backup:
+            raise
+        log.warning("%s: main feed failed (%s); using the backup source", inst.symbol, e)
+        try:
+            n = yahoo.update(inst)
+        except Exception as e2:  # noqa: BLE001 - report the main feed's failure, with the backup's
+            log.warning("%s: backup source failed too: %s", inst.symbol, e2)
+            raise e
+        _refreshed[inst.symbol] = time.time()
+        return n
+
+
 def _update_one(source: str, inst: Instrument) -> int:
     if not _claim(inst):  # being loaded or refreshed right now by someone opening it
         return 0
     try:
-        n = update(source, inst)
+        n = fetch_market(source, inst)
         _ready.add(inst.symbol)
         _errors.pop(inst.symbol, None)
         return n
@@ -708,7 +742,7 @@ def update_all(source: str) -> int:
 def extend_all(source: str, budget_seconds: float = 600) -> int:
     """Fill in older history for markets that have only their recent prices so far (see update), one
     market at a time and for at most `budget_seconds`, so it never holds up the price updates."""
-    if source != "dukascopy":
+    if source != "dukascopy" or _feed_down():  # the main feed is refusing downloads: try again later
         return 0
     t0 = time.monotonic()
     total = 0
@@ -854,7 +888,8 @@ def ensure(inst: Instrument, background: bool | None = None) -> str:
 def _first_load(source: str, inst: Instrument) -> None:
     """Load (or refresh) one market that someone opened. The caller has claimed it (_claim)."""
     try:
-        update(source, inst)
+        fetch_market(source, inst)
+        _errors.pop(inst.symbol, None)
         if has_prices(inst):
             with db.conn() as c:
                 c.execute("DELETE FROM meta WHERE key = %s", (f"unavailable:{inst.symbol}",))
@@ -907,8 +942,12 @@ def probe(source: str = "dukascopy") -> dict[str, str]:
                 duka_point(client, inst)
                 out[inst.symbol] = "ok"
             except NotCarried:
-                mark_unavailable(inst)
-                out[inst.symbol] = "unavailable"
+                from . import yahoo
+                if yahoo.enabled() and yahoo.symbol(inst):
+                    out[inst.symbol] = "backup"  # the backup source serves it
+                else:
+                    mark_unavailable(inst)
+                    out[inst.symbol] = "unavailable"
             except Exception as e:  # noqa: BLE001 - a network hiccup is not a verdict
                 log.warning("probe %s failed: %s", inst.symbol, e)
                 out[inst.symbol] = "error"
