@@ -68,6 +68,23 @@ def open_market(symbol: str):
     return {"symbol": inst.symbol, "status": ingest.ensure(inst)}
 
 
+@router.get("/health")
+def health():
+    """How the price feed is doing, to diagnose markets that don't fill in: the scheduler's settings, the
+    last update run, markets loading right now, markets marked as not carried, and each market's last fetch
+    error. Holds no personal data."""
+    with db.conn() as c:
+        rows = c.execute("""SELECT symbol, max(ts) AS ts FROM candles WHERE tf = '1h' GROUP BY symbol""").fetchall()
+    now = datetime.now(timezone.utc)
+    newest = {r["symbol"]: round((now - r["ts"]).total_seconds() / 3600, 1) for r in rows}
+    return {"scheduler": config.ENABLE_SCHEDULER, "source": config.PRICE_SOURCE,
+            "interval_min": config.UPDATE_INTERVAL_MIN, "workers": config.UPDATE_WORKERS,
+            "last_run": ingest._last_run or None, "core": sorted(ins.CORE),
+            "loading": sorted(ingest._loading), "unavailable": sorted(ingest.unavailable_symbols()),
+            "errors": {k: {"at": a, "error": e} for k, (a, e) in sorted(ingest._errors.items())},
+            "hours_since_newest_bar": dict(sorted(newest.items()))}
+
+
 def _ts(v: int | None) -> datetime | None:
     return datetime.fromtimestamp(v, tz=timezone.utc) if v is not None else None
 

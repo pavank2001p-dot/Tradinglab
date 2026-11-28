@@ -112,3 +112,21 @@ def test_updates_run_several_markets_at_once(client, monkeypatch):
     # A market being loaded by someone opening it is left to that load.
     ingest._busy.add("XAUUSD")
     assert ingest.update_all("sample") == len(instruments.CORE) - 1
+
+
+def test_old_unavailable_marks_are_cleared_once(client):
+    db.set_meta("unavailable_reset", "")  # the client fixture's startup ran on a truncated table
+    ingest.mark_unavailable(XLE)
+    assert ingest.clear_old_unavailable_marks() == 1 and not ingest.is_unavailable(XLE)
+    ingest.mark_unavailable(XLE)
+    assert ingest.clear_old_unavailable_marks() == 0 and ingest.is_unavailable(XLE)  # only once
+
+
+def test_health_shows_fetch_errors(client, monkeypatch):
+    def down(source, inst):
+        raise ingest.FeedError("giving up on https://datafeed.dukascopy.com/x")
+
+    monkeypatch.setattr(ingest, "update", down)
+    ingest.update_all("dukascopy")
+    h = client.get("/prices/health").json()
+    assert "FeedError" in h["errors"]["XAUUSD"]["error"] and h["last_run"]["markets"] == len(instruments.CORE)
